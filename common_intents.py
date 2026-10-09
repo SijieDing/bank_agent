@@ -8,8 +8,16 @@ class CommonIntentHandler:
     def handle(
         self,
         capability: str,
-        customer_context: dict,
+        customer_context: dict | None,
     ) -> str:
+        if capability == "contact_information":
+            data = self.gateway.get_contact_information()
+
+            return (
+                f"Call us at {data['phone']}. "
+                f"Our office is at {data['address']}, open {data['hours']}."
+            )
+
         account_id = customer_context["default_account_id"]
 
         if capability == "account_balance":

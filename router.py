@@ -63,6 +63,17 @@ class CapabilityRouter:
                 confidence=0.95,
             )
 
+        if not complex_request and (
+            "contact" in text
+            or "phone number" in text
+            or "address" in text
+        ):
+            return RouteResult(
+                intent_type=IntentType.COMMON,
+                capability="contact_information",
+                confidence=0.95,
+            )
+
         # shortcut: Keyword routing can miss new phrasing; use a classifier if coverage grows.
         tools = []
         if any(word in text for word in (

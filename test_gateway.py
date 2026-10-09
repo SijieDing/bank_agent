@@ -45,6 +45,12 @@ class GatewayIsolationTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         method(unknown)
 
+    def test_contact_information_needs_no_account(self):
+        data = self.gateway.get_contact_information()
+        self.assertEqual(data["phone"], "+1-800-555-0142")
+        self.assertEqual(data["address"], "123 Bank Street, Toronto, ON M5V 1J1")
+        self.assertEqual(data["hours"], "Monday to Friday, 9:00 AM to 5:00 PM (Eastern)")
+
     def test_responses_cannot_mutate_shared_fixtures(self):
         transactions = self.gateway.get_transactions("CHK-002")["transactions"]
         transactions[0]["description"] = "changed"

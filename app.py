@@ -100,7 +100,10 @@ class BankingAgent:
                 f"Confidence: {route.confidence:.2f}"
             )
 
-            if self._customer_context is None:
+            if route.capability == "contact_information":
+                answer = self.common_handler.handle(route.capability, None)
+                tools = ()
+            elif self._customer_context is None:
                 reply = self.pi_agent.handle(
                     message, None, (),
                     conversation_history=self.history.copy(),

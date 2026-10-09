@@ -186,3 +186,10 @@ class BankingToolGateway:
             "account_id": account_id,
             "payments": [dict(payment) for payment in self._account(account_id)["payments"]],
         }
+
+    def get_contact_information(self) -> dict[str, Any]:
+        return {
+            "phone": "+1-800-555-0142",
+            "address": "123 Bank Street, Toronto, ON M5V 1J1",
+            "hours": "Monday to Friday, 9:00 AM to 5:00 PM (Eastern)",
+        }

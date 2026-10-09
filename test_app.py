@@ -4,6 +4,7 @@ from unittest.mock import call, patch
 
 from app import BankingAgent, main
 from pi_agent import PiReply
+from router import IntentType, RouteResult
 
 
 CUSTOMER_CONTEXT = {
@@ -170,6 +171,33 @@ class AuthenticationTests(BankingAgentTestCase):
         self.agent.reset()
         self.assertEqual(self.agent.customer_context, CUSTOMER_CONTEXT)
         self.assertEqual(self.agent.failed_auth_attempts, 1)
+
+    def test_contact_information_needs_no_sign_in_or_pi(self):
+        with patch.object(self.agent.router, "route") as route:
+            route.return_value = RouteResult(
+                intent_type=IntentType.COMMON,
+                capability="contact_information",
+                confidence=0.95,
+            )
+            answer = self.agent.handle("What is your phone number?")
+        self.assertEqual(answer, "Verified common answer")
+        self.pi_handle.assert_not_called()
+        self.common_handle.assert_called_once_with("contact_information", None)
+        self.assertIsNone(self.agent.customer_context)
+        self.assertFalse(self.agent.authentication_requested)
+
+    def test_contact_information_uses_no_tools_and_context(self):
+        self.authenticate()
+        with patch.object(self.agent.router, "route") as route:
+            route.return_value = RouteResult(
+                intent_type=IntentType.COMMON,
+                capability="contact_information",
+                confidence=0.95,
+            )
+            answer = self.agent.handle("Where is your office?")
+        self.assertEqual(answer, "Verified common answer")
+        self.pi_handle.assert_not_called()
+        self.common_handle.assert_called_once_with("contact_information", None)
 
     def test_credentials_in_chat_are_rejected_before_routing_or_model(self):
         messages = (
