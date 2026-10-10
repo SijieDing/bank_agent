@@ -104,8 +104,13 @@ class BankingAgent:
                 answer = self.common_handler.handle(route.capability, None)
                 tools = ()
             elif self._customer_context is None:
+                tools = (
+                    route.tools
+                    if route.tools and set(route.tools) <= set(PiBankingAgent.PUBLIC_TOOLS)
+                    else ()
+                )
                 reply = self.pi_agent.handle(
-                    message, None, (),
+                    message, None, tools,
                     conversation_history=self.history.copy(),
                 )
                 answer = reply.answer
@@ -113,7 +118,6 @@ class BankingAgent:
                 self._replay_after_authentication = reply.authentication_requested and (
                     route.intent_type == IntentType.COMMON or bool(route.tools)
                 )
-                tools = ()
             elif route.intent_type == IntentType.COMMON:
                 answer = self.common_handler.handle(route.capability, self.customer_context)
                 tools = self.COMMON_TOOLS[route.capability]

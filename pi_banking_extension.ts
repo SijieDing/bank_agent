@@ -37,4 +37,5 @@ export default function (pi: ExtensionAPI) {
     }));
   register("get_credit_card_summary", "Get the customer's credit card balance and payment details.", Type.Object({}));
   register("get_upcoming_payments", "Get upcoming payments for the customer's account.", Type.Object({}));
+  register("get_contact_information", "Get the bank's public phone number, office address, and opening hours. No customer sign-in is required.", Type.Object({}));
 }

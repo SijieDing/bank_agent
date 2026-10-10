@@ -19,7 +19,7 @@ The Python app has no third-party dependencies. Complex requests require the
 User
   |
   v
-Unauthenticated --> Pi returns AUTHENTICATE or PUBLIC with no tools
+Unauthenticated --> Public contact tool, or Pi returns AUTHENTICATE/PUBLIC
                           |
                           v
                  Hidden local card/PIN prompts
@@ -58,7 +58,9 @@ The first personal banking question goes to Pi, including common balance
 questions. A short model call decides whether sign-in is needed by returning
 `AUTHENTICATE` or `PUBLIC`. `AUTHENTICATE` immediately opens the hidden prompts;
 it does not depend on the model executing a tool. `PUBLIC` continues to a general
-answer with no banking tools. An invalid decision is retried once and then
+answer with no personal banking tools. Contact requests can use the public
+`get_contact_information` gateway tool without signing in, including phrasing
+that misses the common-intent fast path. An invalid decision is retried once and then
 reported as an error. After successful sign-in, the common path works without further Pi calls.
 Complex questions and contextual follow-ups call Pi and its read only banking
 tools. You should see output similar to:

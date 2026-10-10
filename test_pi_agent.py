@@ -17,6 +17,14 @@ class RecordingGateway(BankingToolGateway):
         self.calls.append(("get_balance", account_id))
         return {"account_id": account_id, "available_balance": 123.45, "currency": "CAD"}
 
+    def get_contact_information(self):
+        self.calls.append(("get_contact_information",))
+        return {
+            "phone": "+1-800-555-0142",
+            "address": "123 Bank Street, Toronto, ON M5V 1J1",
+            "hours": "Monday to Friday, 9:00 AM to 5:00 PM (Eastern)",
+        }
+
 
 def pi_result(text="Pi answer", stop_reason="stop", error_message=None):
     message = {
@@ -130,6 +138,34 @@ class PiBankingAgentTests(unittest.TestCase):
         self.assertEqual(reply, PiReply("General answer"))
         self.assertEqual([call.args[2] for call in run.call_args_list], [(), ()])
 
+    def test_public_contact_tool_uses_gateway_without_authentication(self):
+        gateway = RecordingGateway()
+
+        def fake_pi(command, *, env, **kwargs):
+            self.assertEqual(
+                command[command.index("--tools") + 1], "get_contact_information"
+            )
+            policy = command[command.index("--system-prompt") + 1]
+            self.assertIn("does not require sign-in", policy)
+            request = Request(
+                env["BANK_AGENT_URL"],
+                data=json.dumps({"tool": "get_contact_information"}).encode(),
+                headers={"Authorization": f"Bearer {env['BANK_AGENT_TOKEN']}"},
+            )
+            with urlopen(request, timeout=2) as response:
+                self.assertEqual(json.load(response)["address"],
+                                 "123 Bank Street, Toronto, ON M5V 1J1")
+            return pi_result("The office is at 123 Bank Street.")
+
+        with patch("pi_agent.subprocess.run", side_effect=fake_pi) as run:
+            reply = PiBankingAgent(gateway).handle(
+                "Where is your location?", None, ("get_contact_information",)
+            )
+
+        self.assertEqual(reply, PiReply("The office is at 123 Bank Street."))
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(gateway.calls, [("get_contact_information",)])
+
     def test_invalid_authentication_decision_is_retried_then_rejected(self):
         agent = PiBankingAgent(BankingToolGateway())
         with patch.object(agent, "_run_pi", side_effect=["Please sign in", "Please sign in"]) as run:
@@ -146,6 +182,14 @@ class PiBankingAgentTests(unittest.TestCase):
                 with self.subTest(tools=tools), self.assertRaises(ValueError):
                     agent.handle("What is my balance?", None, tools)
             run.assert_not_called()
+
+    def test_location_route_selects_public_contact_tool(self):
+        from router import CapabilityRouter, IntentType
+
+        route = CapabilityRouter().route("Where is your location?")
+
+        self.assertEqual(route.intent_type, IntentType.COMPLEX)
+        self.assertEqual(route.tools, ("get_contact_information",))
 
     def test_credentials_in_messages_or_user_history_are_rejected_before_pi(self):
         agent = PiBankingAgent(BankingToolGateway())

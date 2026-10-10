@@ -199,6 +199,19 @@ class AuthenticationTests(BankingAgentTestCase):
         self.pi_handle.assert_not_called()
         self.common_handle.assert_called_once_with("contact_information", None)
 
+    def test_location_wording_uses_public_pi_tool_without_sign_in(self):
+        question = "Where is your location?"
+
+        answer = self.agent.handle(question)
+
+        self.assertEqual(answer, "Pi answer")
+        self.pi_handle.assert_called_once_with(
+            question, None, ("get_contact_information",), conversation_history=[]
+        )
+        self.common_handle.assert_not_called()
+        self.assertFalse(self.agent.authentication_requested)
+        self.assertIsNone(self.agent.customer_context)
+
     def test_credentials_in_chat_are_rejected_before_routing_or_model(self):
         messages = (
             "4111111111111111", "My card is 4111 1111 1111 1111",

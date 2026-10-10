@@ -105,6 +105,12 @@ class CapabilityRouter:
             tools.append("search_transactions")
         if any(word in text for word in ("card", "minimum payment", "信用卡")):
             tools.append("get_credit_card_summary")
+        if any(phrase in text for phrase in (
+            "contact", "phone", "telephone", "address", "location", "located",
+            "office", "branch", "opening hours", "business hours", "reach you",
+            "reach the bank", "call you",
+        )):
+            tools.append("get_contact_information")
 
         return RouteResult(
             intent_type=IntentType.COMPLEX,
