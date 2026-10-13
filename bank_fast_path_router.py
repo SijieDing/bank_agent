@@ -149,17 +149,19 @@ class TransactionDates:
 
 
 ISO = r"\d{4}-\d{2}-\d{2}"
+RECENT_DAYS = 10  # Product default: calendar dates including today.
 # Ordered longest/specific phrases first. Unsupported time expressions fail closed.
 TIME_PATTERNS = [
     ("range", rf"\b(?:from\s+{ISO}\s+(?:to|through|until)\s+{ISO}|between\s+{ISO}\s+and\s+{ISO})\b"),
     ("bound", rf"\b(?:on\s+or\s+before|on\s+or\s+after|before|after|since|until|through|on)\s+{ISO}\b"),
-    ("rolling", r"\b(?:(?:in|for|over|during)\s+)?(?:the\s+)?(?:past|last|previous)\s+\d+\s+(?:days?|weeks?|months?|years?)\b"),
+    ("rolling", r"\b(?:(?:in|for|over|during)\s+)?(?:the\s+)?(?:past|last|previous|recent)\s+\d+\s+(?:days?|weeks?|months?|years?)\b"),
+    ("recent", r"\b(?:(?:(?:in|for|over|during)\s+)?(?:the\s+)?recent\s+days\b|recent(?=\s+transactions?\b))"),
     ("period", r"\b(?:(?:in|for|during)\s+)?(?:the\s+)?(?:this|last|previous)\s+(?:week|month|year)\b"),
     ("day", r"\b(?:today|yesterday|ytd|year-to-date)\b"),
 ]
 # Intentionally conservative; a named month or an unhandled date must not disappear.
 TIME_CUE_RE = re.compile(
-    r"\b(?:past|last|previous|today|yesterday|tomorrow|this|ago|now|ytd|year-to-date|"
+    r"\b(?:past|last|previous|recent|today|yesterday|tomorrow|this|ago|now|ytd|year-to-date|"
     r"before|after|since|until|through|between|from|"
     r"days?|weeks?|months?|years?|hours?|minutes?|quarters?|weekends?|"
     r"january|february|march|april|may|june|july|august|september|october|"
@@ -184,7 +186,8 @@ def shift_months(value: date, delta: int) -> date:
 def resolve_transaction_dates(message: str, today: date) -> TransactionDates:
     """Supported grammar, independent of LLM output.
 
-    past N days/weeks: N/7N calendar dates including today.
+    past/last/recent N days/weeks: N/7N calendar dates including today.
+    recent days / recent transactions: RECENT_DAYS (10) calendar dates including today.
     past N months/years: calendar subtraction through today, inclusive.
     last month/year/week: previous COMPLETE calendar period (weeks start Monday).
     this month/year/week: period start through today.
@@ -236,6 +239,9 @@ def resolve_transaction_dates(message: str, today: date) -> TransactionDates:
                 end = boundary
             else:  # on
                 start = end = boundary
+        elif kind == "recent":
+            start = today - timedelta(days=RECENT_DAYS - 1)
+            end = today
         elif kind == "rolling":
             count = int(re.search(r"\d+", phrase).group())
             if not 1 <= count <= 36600:
