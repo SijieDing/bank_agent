@@ -27,7 +27,7 @@ class CapabilityRouter:
             word in text for word in (
                 "afford", "enough", "mortgage", "upcoming", "after",
                 "spent", "spend", "spending", "saving", "saved", "search",
-                "compare", "can i", "买吗",
+                "compare", "can i", "买吗", "if", "when"
             )
         )
 
@@ -78,14 +78,14 @@ class CapabilityRouter:
         tools = []
         if any(word in text for word in (
             "balance", "afford", "enough", "can i buy", "can i purchase",
-            "mortgage", "付款"
+            "mortgage", "付款", "remained", "spend", "remain", "pay", "payment", "transfer", "remain", "remained"
         )):
             tools.append("get_balance")
         if any(word in text for word in ("mortgage", "upcoming", "payment coming")):
             tools.append("get_upcoming_payments")
         transaction_query = any(word in text for word in (
             "transaction", "spent", "spend", "spending", "saving", "saved",
-            "merchant", "search"
+            "merchant", "search", "payments", "pay", "purchase", "purchasement", "payment"
         ))
         time_range = any(word in text for word in (
             "month", "week", "year", "between", "from ", "since", "date"
@@ -108,10 +108,14 @@ class CapabilityRouter:
         if any(phrase in text for phrase in (
             "contact", "phone", "telephone", "address", "location", "located",
             "office", "branch", "opening hours", "business hours", "reach you",
-            "reach the bank", "call you",
+            "reach the bank", "call you", "time", "when", "where"
         )):
             tools.append("get_contact_information")
-
+        if not tools:
+            tools.append("get_balance")
+            tools.append("get_transactions")
+            tools.append("search_transactions")
+            tools.append("get_contact_information")
         return RouteResult(
             intent_type=IntentType.COMPLEX,
             capability="banking_reasoning",

@@ -238,6 +238,29 @@ class PiBankingAgentTests(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["stdin"], subprocess.DEVNULL)
         self.assertIn("--mode", run.call_args.args[0])
         self.assertIn("--no-tools", run.call_args.args[0])
+        self.assertEqual(run.call_args.args[0][run.call_args.args[0].index("--thinking") + 1], "medium")
+
+    def test_json_output_prints_completed_thinking_content(self):
+        message = {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "Check the account data."},
+                {"type": "text", "text": "Final answer"},
+            ],
+            "stopReason": "stop",
+        }
+        result = subprocess.CompletedProcess(
+            [], 0, stdout=json.dumps({"type": "message_end", "message": message}), stderr="",
+        )
+
+        with (
+            patch("pi_agent.subprocess.run", return_value=result),
+            patch("builtins.print") as output,
+        ):
+            answer = PiBankingAgent(BankingToolGateway())._run_pi("Hello", "Policy", ())
+
+        self.assertEqual(answer, "Final answer")
+        output.assert_called_once_with("Pi thinking:", "Check the account data.")
 
     def test_json_output_surfaces_errors_and_incomplete_answers(self):
         agent = PiBankingAgent(BankingToolGateway())
