@@ -199,16 +199,14 @@ class AuthenticationTests(BankingAgentTestCase):
         self.pi_handle.assert_not_called()
         self.common_handle.assert_called_once_with("contact_information", None)
 
-    def test_location_wording_uses_public_pi_tool_without_sign_in(self):
+    def test_location_wording_uses_contact_fast_path_without_sign_in(self):
         question = "Where is your location?"
 
         answer = self.agent.handle(question)
 
-        self.assertEqual(answer, "Pi answer")
-        self.pi_handle.assert_called_once_with(
-            question, None, ("get_contact_information",), conversation_history=[]
-        )
-        self.common_handle.assert_not_called()
+        self.assertEqual(answer, "Verified common answer")
+        self.pi_handle.assert_not_called()
+        self.common_handle.assert_called_once_with("contact_information", None)
         self.assertFalse(self.agent.authentication_requested)
         self.assertIsNone(self.agent.customer_context)
 

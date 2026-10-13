@@ -102,6 +102,29 @@ class CapabilityRouterTests(unittest.TestCase):
         self.assertEqual(route.slots.start_date, "2026-10-01")
         self.assertEqual(route.slots.end_date, "2026-10-20")
 
+    def test_contact_questions_use_the_public_contact_fast_path(self):
+        proposal = Route(
+            plan_id="contact_information",
+            slots=Slots(),
+            fully_covered=True,
+            reason="bank contact information",
+        )
+        router = CapabilityRouter(client=model_client(proposal), model_id="test-model")
+
+        for message in (
+            "your contact information",
+            "your phone number",
+            "your location",
+            "Where is your office",
+            "Your work hours",
+            "When do you open",
+        ):
+            with self.subTest(message=message):
+                route = router.route(message)
+                self.assertEqual(route.intent_type, IntentType.COMMON)
+                self.assertEqual(route.capability, "contact_information")
+                self.assertEqual(route.tools, ("get_contact_information",))
+
     def test_unavailable_small_model_falls_back_to_pi(self):
         client = Mock()
         client.chat.completions.create.side_effect = OSError("offline")
@@ -126,6 +149,16 @@ class FastPathHandlerTests(unittest.TestCase):
         self.assertEqual(
             answer,
             "After spending CAD 160.00, your available balance would be CAD 5,160.45.",
+        )
+
+    def test_contact_questions_return_all_contact_information(self):
+        answer = self.handler.handle("contact_information", None)
+
+        self.assertEqual(
+            answer,
+            "Call us at +1-800-555-0142. Our office is at "
+            "123 Bank Street, Toronto, ON M5V 1J1, open "
+            "Monday to Friday, 9:00 AM to 5:00 PM (Eastern).",
         )
 
     def test_monthly_projection_uses_extracted_duration(self):

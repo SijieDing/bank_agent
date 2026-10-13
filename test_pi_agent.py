@@ -183,12 +183,13 @@ class PiBankingAgentTests(unittest.TestCase):
                     agent.handle("What is my balance?", None, tools)
             run.assert_not_called()
 
-    def test_location_route_selects_public_contact_tool(self):
+    def test_location_route_selects_contact_fast_path(self):
         from router import CapabilityRouter, IntentType
 
         route = CapabilityRouter().route("Where is your location?")
 
-        self.assertEqual(route.intent_type, IntentType.COMPLEX)
+        self.assertEqual(route.intent_type, IntentType.COMMON)
+        self.assertEqual(route.capability, "contact_information")
         self.assertEqual(route.tools, ("get_contact_information",))
 
     def test_credentials_in_messages_or_user_history_are_rejected_before_pi(self):

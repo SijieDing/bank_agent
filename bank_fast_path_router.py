@@ -31,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 PlanId = Literal[
     "get_balance", "balance_after_spending", "project_balance",
-    "query_transactions", "unknown",
+    "query_transactions", "contact_information", "unknown",
 ]
 
 # Only these reviewed templates are eligible for Fast Path. This is NOT a tool planner.
@@ -40,6 +40,7 @@ PLANS = {
     "balance_after_spending": "Calculate remaining balance after ONE hypothetical one-time expense. Requires amount.",
     "project_balance": "Calculate remaining balance after ONE hypothetical fixed MONTHLY expense over N months/years; no income, interest or other changes.",
     "query_transactions": "Query transactions by date range, amount range, amount threshold, and/or store name.",
+    "contact_information": "Return the bank's full phone number, office address, and opening hours.",
 }
 
 class Slots(BaseModel):
@@ -68,9 +69,10 @@ Available reviewed plans:
 - balance_after_spending: Compute balance after exactly ONE hypothetical one-time expense. Required: amount.
 - project_balance: Compute balance after exactly ONE hypothetical fixed MONTHLY expense for a specified duration in months or years. Required: amount, frequency=monthly, duration_value, duration_unit. No interest, income, deposits, other expenses, or compound conditions.
 - query_transactions: Query transactions using one or more supported filters: an inclusive ISO start/end date range, with either or both bounds; an inclusive minimum/maximum amount range; a strict amount-over threshold (minimum_amount only); or a store name.
+- contact_information: Return the bank's complete contact information (phone number, office address, and opening hours). Use this for requests about any one or more of those contact details.
 
 Output a single JSON object ONLY, with EXACTLY these keys:
-{"plan_id":"get_balance|balance_after_spending|project_balance|query_transactions|unknown",
+{"plan_id":"get_balance|balance_after_spending|project_balance|query_transactions|contact_information|unknown",
  "slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null},
  "fully_covered":true,"reason":"brief reason"}
 
@@ -93,6 +95,7 @@ Rules:
 - A null date bound means unbounded, not missing required information.
 - The marker [resolved date filter] represents a supported transaction date filter; it is not a store name.
 - A transaction request with [resolved date filter] needs no amount or store to be fully covered.
+- contact_information always returns all contact details even if the user asks for only the phone, location, office, or hours. It uses no slots and requires no sign-in.
 
 Examples:
 User: What is my balance?
@@ -115,6 +118,10 @@ User: Show my transactions about Amazon.
 Output: {"plan_id":"query_transactions","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":"Amazon"},"fully_covered":true,"reason":"store transactions"}
 User: Show my transactions about Amazon from 2026-01-01 to 2026-10-10.
 Output: {"plan_id":"query_transactions","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":"2026-01-01","end_date":"2026-10-10","minimum_amount":null,"maximum_amount":null,"store_name":"Amazon"},"fully_covered":true,"reason":"store transactions in date range"}
+User: What is your phone number?
+Output: {"plan_id":"contact_information","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null},"fully_covered":true,"reason":"bank contact information"}
+User: When do you open?
+Output: {"plan_id":"contact_information","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null},"fully_covered":true,"reason":"bank opening hours"}
 """
 
 # Conservative exclusion patterns. False negatives are fine: Pi Agent handles them.
@@ -136,6 +143,12 @@ SPENDING_RE = re.compile(
 TRANSACTION_RE = re.compile(r"\btransactions?\b", re.I)
 OVER_RE = re.compile(r"\b(?:over|above|more than|greater than)\b", re.I)
 BETWEEN_RE = re.compile(r"\bbetween\b", re.I)
+CONTACT_RE = re.compile(
+    r"\b(?:contact (?:information|info|details)|phone(?: number)?|telephone(?: number)?|"
+    r"address|location|office|(?:work|business|opening|office) hours?)\b|"
+    r"\b(?:when|what time)\s+(?:do|does)\s+(?:you|the (?:bank|office))\s+open\b",
+    re.I,
+)
 
 
 
@@ -391,6 +404,13 @@ def validate_route(
             return False, "Balance-only plan must not contain numbers or slots"
         return True, ""
 
+    if route.plan_id == "contact_information":
+        if nums or any(v is not None for v in slots.model_dump().values()):
+            return False, "Contact-information plan must not contain numbers or slots"
+        if not CONTACT_RE.search(message):
+            return False, "Contact-information wording not confirmed"
+        return True, ""
+
     if route.plan_id == "query_transactions":
         if not TRANSACTION_RE.search(message):
             return False, "Transaction query wording not confirmed"
@@ -562,6 +582,9 @@ def preview(route: Route, balance: Decimal | None) -> dict:
         return {"next": "bank_tool", "plan": route.plan_id,
                 "filters": route.slots.model_dump(exclude_none=True),
                 "message": "Validated route only. Connect your read-only transaction tool in your application."}
+    if route.plan_id == "contact_information":
+        return {"next": "bank_tool", "plan": route.plan_id,
+                "message": "Validated route only. Connect your public contact-information tool in your application."}
     if balance is None:
         return {"next": "bank_tool", "plan": route.plan_id,
                 "message": "Validated route only. Connect your read-only balance tool in your application."}

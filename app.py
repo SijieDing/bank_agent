@@ -19,6 +19,7 @@ class BankingAgent:
         "balance_after_spending": ("get_balance",),
         "project_balance": ("get_balance",),
         "query_transactions": ("get_transactions",),
+        "contact_information": ("get_contact_information",),
     }
 
     def __init__(self):
