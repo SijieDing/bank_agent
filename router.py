@@ -1,6 +1,12 @@
-import re
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
+from datetime import date, datetime
 from enum import Enum
+from zoneinfo import ZoneInfo
+
+from openai import OpenAI, OpenAIError
+
+from bank_fast_path_router import Slots, route_request
 
 
 class IntentType(str, Enum):
@@ -14,109 +20,70 @@ class RouteResult:
     capability: str
     confidence: float
     tools: tuple[str, ...] = ()
+    slots: Slots = field(default_factory=Slots)
+    reason: str = ""
 
 
 class CapabilityRouter:
+    """Route reviewed requests through the local small-model fast path."""
+
+    PLAN_TOOLS = {
+        "get_balance": ("get_balance",),
+        "balance_after_spending": ("get_balance",),
+        "project_balance": ("get_balance",),
+        "query_transactions": ("get_transactions",),
+    }
+    FALLBACK_TOOLS = (
+        "get_balance",
+        "get_transactions",
+        "search_transactions",
+        "get_credit_card_summary",
+        "get_upcoming_payments",
+        "get_contact_information",
+    )
+
+    def __init__(
+        self,
+        client: OpenAI | None = None,
+        model_id: str | None = None,
+        today: date | None = None,
+        timezone_name: str | None = None,
+    ):
+        self.client = client or OpenAI(
+            base_url=os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1"),
+            api_key="lm-studio",
+            timeout=45.0,
+            max_retries=0,
+        )
+        self.model_id = model_id or os.getenv("LMSTUDIO_MODEL", "qwen3.5-0.8b-mlx")
+        self.today = today
+        timezone_name = timezone_name or os.getenv("BANK_TIMEZONE")
+        self.business_timezone = ZoneInfo(timezone_name) if timezone_name else None
+
     def route(self, message: str) -> RouteResult:
-        text = message.lower()
-        recent_match = re.search(
-            r"\b(?:last|latest)\s+(\d+)\s+transactions?\b", text
+        try:
+            today = self.today or datetime.now(self.business_timezone).date()
+            route, _ = route_request(self.client, self.model_id, message, today)
+        except (OpenAIError, OSError, RuntimeError) as exc:
+            return self._fallback(f"Fast-path model unavailable: {exc}")
+
+        if route.plan_id == "unknown":
+            return self._fallback(route.reason)
+
+        return RouteResult(
+            intent_type=IntentType.COMMON,
+            capability=route.plan_id,
+            confidence=1.0,
+            tools=self.PLAN_TOOLS[route.plan_id],
+            slots=route.slots,
+            reason=route.reason,
         )
 
-        complex_request = any(
-            word in text for word in (
-                "afford", "enough", "mortgage", "upcoming", "after",
-                "spent", "spend", "spending", "saving", "saved", "search",
-                "compare", "can i", "if", "when"
-            )
-        )
-
-        # Common intents should be handled without full agent reasoning.
-        if not complex_request and (
-            "credit card balance" in text
-            or "minimum payment" in text
-        ):
-            return RouteResult(
-                intent_type=IntentType.COMMON,
-                capability="credit_card_summary",
-                confidence=0.95,
-            )
-
-        if not complex_request and (
-            "balance" in text
-        ):
-            return RouteResult(
-                intent_type=IntentType.COMMON,
-                capability="account_balance",
-                confidence=0.98,
-            )
-
-        if not complex_request and (
-            "recent transaction" in text
-            or "recent transactions" in text
-        ):
-            return RouteResult(
-                intent_type=IntentType.COMMON,
-                capability="recent_transactions",
-                confidence=0.95,
-            )
-
-        if not complex_request and (
-            "contact" in text
-            or "phone number" in text
-            or "address" in text
-        ):
-            return RouteResult(
-                intent_type=IntentType.COMMON,
-                capability="contact_information",
-                confidence=0.95,
-            )
-
-        # shortcut: Keyword routing can miss new phrasing; use a classifier if coverage grows.
-        tools = []
-        if any(word in text for word in (
-            "balance", "afford", "enough", "can i buy", "can i purchase",
-            "mortgage", "remained", "spend", "remain", "pay", "payment", "transfer", "remain", "remained"
-        )):
-            tools.append("get_balance")
-        if any(word in text for word in ("mortgage", "upcoming", "payment coming")):
-            tools.append("get_upcoming_payments")
-        transaction_query = any(word in text for word in (
-            "transaction", "spent", "spend", "spending", "saving", "saved",
-            "merchant", "search", "payments", "pay", "purchase", "purchasement", "payment"
-        ))
-        time_range = any(word in text for word in (
-            "month", "week", "year", "between", "from ", "since", "date"
-        ))
-        transaction_query = transaction_query or "purchase" in text and (
-            time_range or "list" in text or "show" in text
-        )
-        merchant_query = " at " in text or "merchant" in text or "search" in text
-        total_query = any(word in text for word in (
-            "how much", "total", "overall", "all", "saving", "saved"
-        ))
-        if recent_match:
-            tools.append("get_transactions")
-        elif transaction_query and (time_range or (total_query and not merchant_query)):
-            tools.append("get_transactions")
-        elif transaction_query:
-            tools.append("search_transactions")
-        if any(word in text for word in ("card", "minimum payment")):
-            tools.append("get_credit_card_summary")
-        if any(phrase in text for phrase in (
-            "contact", "phone", "telephone", "address", "location", "located",
-            "office", "branch", "opening hours", "business hours", "reach you",
-            "reach the bank", "call you", "time", "when", "where"
-        )):
-            tools.append("get_contact_information")
-        if not tools:
-            tools.append("get_balance")
-            tools.append("get_transactions")
-            tools.append("search_transactions")
-            tools.append("get_contact_information")
+    def _fallback(self, reason: str) -> RouteResult:
         return RouteResult(
             intent_type=IntentType.COMPLEX,
             capability="banking_reasoning",
-            confidence=0.80,
-            tools=tuple(tools),
+            confidence=0.0,
+            tools=self.FALLBACK_TOOLS,
+            reason=reason,
         )

@@ -54,6 +54,8 @@ class AuthenticationTests(unittest.TestCase):
             "Show transactions from 2026-07-08 through 2026-10-08",
             "Show transactions on 10/09/2026", "Show 2026 transactions",
             "Show transactions from Oct 7, 2026 through October 9, 2026",
+            "Show my accounts from 2026 October 1th to 2026 October 20",
+            "Show my accounts from 2026 October 18th to 2026 October 20",
             "Show July 2026 spending", "What did I spend in 2026?", "Did I spend $5000 last month?",
             "Transfer CAD 5000", "Payment of 5000 USD", "I paid 5000 dollars",
             "My balance is 5000.45", "My balance is 5000", "I spent 5000 last month",

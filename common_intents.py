@@ -1,3 +1,6 @@
+from decimal import Decimal
+
+from bank_fast_path_router import Slots
 from gateway import BankingToolGateway
 
 
@@ -9,6 +12,7 @@ class CommonIntentHandler:
         self,
         capability: str,
         customer_context: dict | None,
+        slots: Slots | None = None,
     ) -> str:
         if capability == "contact_information":
             data = self.gateway.get_contact_information()
@@ -20,13 +24,68 @@ class CommonIntentHandler:
 
         account_id = customer_context["default_account_id"]
 
-        if capability == "account_balance":
+        if capability in ("account_balance", "get_balance"):
             data = self.gateway.get_balance(account_id)
 
             return (
                 f"Your available balance is "
                 f"{data['currency']} "
                 f"{data['available_balance']:,.2f}."
+            )
+
+        if capability == "balance_after_spending":
+            if slots is None or slots.amount is None:
+                raise ValueError("balance_after_spending requires an amount")
+            data = self.gateway.get_balance(account_id)
+            amount = Decimal(str(slots.amount))
+            remaining = Decimal(str(data["available_balance"])) - amount
+            return (
+                f"After spending {data['currency']} {amount:,.2f}, "
+                f"your available balance would be {data['currency']} {remaining:,.2f}."
+            )
+
+        if capability == "project_balance":
+            if (
+                slots is None
+                or slots.amount is None
+                or slots.duration_value is None
+                or slots.duration_unit is None
+            ):
+                raise ValueError("project_balance requires an amount and duration")
+            data = self.gateway.get_balance(account_id)
+            months = slots.duration_value * (12 if slots.duration_unit == "year" else 1)
+            amount = Decimal(str(slots.amount))
+            total = amount * months
+            remaining = Decimal(str(data["available_balance"])) - total
+            return (
+                f"After {months} monthly expenses of "
+                f"{data['currency']} {amount:,.2f}, "
+                f"your available balance would be {data['currency']} {remaining:,.2f}."
+            )
+
+        if capability == "query_transactions":
+            if slots is None:
+                raise ValueError("query_transactions requires filters")
+            data = self.gateway.get_transactions(
+                account_id,
+                start_date=slots.start_date,
+                end_date=slots.end_date,
+                minimum_amount=slots.minimum_amount,
+                maximum_amount=slots.maximum_amount,
+                store_name=slots.store_name.strip() if slots.store_name else None,
+            )
+            if not data["transactions"]:
+                return "No matching transactions were found."
+            lines = [
+                f"{tx['date']} - {tx['description']} ({tx['type']}): "
+                f"${tx['amount']:.2f}"
+                for tx in data["transactions"]
+            ]
+            total = Decimal(data["total_saving"]) + Decimal(data["total_purchase"])
+            return (
+                f"The total of your matching transactions is "
+                f"{data['currency']} {total:,.2f}.\n"
+                "Your matching transactions are:\n" + "\n".join(lines)
             )
 
         if capability == "recent_transactions":

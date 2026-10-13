@@ -3,14 +3,15 @@
 This project demonstrates a simple banking agent architecture with:
 
 - Capability Router
-- Common Intent fast path
-- Complex Intent path
+- Small-model, validated fast path
+- Pi fallback path
 - Pi Agent for complex requests
 - LLM-requested, local secure sign-in
 - Banking Tool Gateway
 - Three isolated mock customers and banking APIs
 
-The Python app has no third-party dependencies. Complex requests require the
+The fast path uses an OpenAI-compatible LM Studio server and a small local model
+(by default `qwen3.5-0.8b-mlx`). Complex requests require the
 [Pi CLI](https://pi.dev/docs/latest/cli) with a configured model and credentials.
 
 ## Architecture
@@ -19,7 +20,7 @@ The Python app has no third-party dependencies. Complex requests require the
 User
   |
   v
-Unauthenticated --> Public contact tool, or Pi returns AUTHENTICATE/PUBLIC
+Unauthenticated --> Pi returns AUTHENTICATE/PUBLIC
                           |
                           v
                  Hidden local card/PIN prompts
@@ -30,14 +31,15 @@ Unauthenticated --> Public contact tool, or Pi returns AUTHENTICATE/PUBLIC
                           v
 Capability Router
   |
-  +--> Common Intent --> Banking Tool Gateway
+  +--> Validated fast path --> Banking Tool Gateway
   |
-  +--> Complex Intent --> Pi Agent --> Banking Tool Gateway
+  +--> Unknown/unsupported --> Pi Agent --> Banking Tool Gateway
 ```
 
 ## Requirements
 
 - Python 3.10 or newer
+- LM Studio with its local server running and the configured small model loaded
 - Pi CLI installed and available as `pi` on `PATH`
 - A configured Pi model and provider credentials
 
@@ -45,8 +47,15 @@ Capability Router
 
 ```bash
 cd bank_agent
+python3 -m pip install -r requirements.txt
 python3 app.py
 ```
+
+The router connects to `http://localhost:1234/v1` and uses
+`qwen3.5-0.8b-mlx` by default. Override these with `LMSTUDIO_BASE_URL` and
+`LMSTUDIO_MODEL`; set `BANK_TIMEZONE` (for example, `America/Toronto`) for
+relative transaction dates. If the local router is unavailable or rejects a
+request, the request falls back to Pi.
 
 The app runs a continuous question-and-answer chat in your terminal. Type a
 question and press Enter; the app answers and waits for your next question.
@@ -54,16 +63,17 @@ Use `/reset` to clear the conversation or `/exit` (also `/quit`, `exit`, or
 `quit`) to stop. EOF or Ctrl-C also exits. Empty input is ignored, and a failed
 request reports its error so you can try again.
 
-The first personal banking question goes to Pi, including common balance
-questions. A short model call decides whether sign-in is needed by returning
-`AUTHENTICATE` or `PUBLIC`. `AUTHENTICATE` immediately opens the hidden prompts;
-it does not depend on the model executing a tool. `PUBLIC` continues to a general
-answer with no personal banking tools. Contact requests can use the public
-`get_contact_information` gateway tool without signing in, including phrasing
-that misses the common-intent fast path. An invalid decision is retried once and then
-reported as an error. After successful sign-in, the common path works without further Pi calls.
-Complex questions and contextual follow-ups call Pi and its read only banking
-tools. You should see output similar to:
+The first personal banking question is classified by the local router and then
+goes to Pi for the sign-in decision. A short model call decides whether sign-in
+is needed by returning `AUTHENTICATE` or `PUBLIC`. `AUTHENTICATE` immediately
+opens the hidden prompts; it does not depend on the model executing a tool.
+`PUBLIC` continues to a general answer with no personal banking tools. An
+invalid decision is retried once and then reported as an error. After successful
+sign-in, validated balance, hypothetical spending, monthly projection, and
+filtered transaction requests run without further Pi calls. Contact-information
+and credit-card-summary fast paths are intentionally deferred; those requests
+use the Pi fallback. Complex questions and contextual follow-ups also call Pi
+and its read-only banking tools. You should see output similar to:
 
 ```text
 You: What is my balance?
@@ -71,12 +81,12 @@ Agent: Please enter your card number and PIN in the hidden secure sign-in prompt
 Card number (hidden):
 PIN (hidden):
 Sign-in successful. This conversation is locked to this user.
-Route: common, Capability: account_balance, Confidence: 0.98
+Route: common, Capability: get_balance, Confidence: 1.00
 Agent: Your available balance is CAD 5,320.45.
 ```
 
-Requests such as "Tell me last 3 transactions" use Pi with only the
-`get_transactions` tool and set its limit to the requested count.
+Requests outside the four reviewed plans, such as "Tell me last 3 transactions,"
+use the Pi fallback.
 
 ## Secure sign-in and demo users
 
@@ -84,7 +94,7 @@ Card numbers and PINs are entered using `getpass` and checked locally in Python.
 They are never included in model prompts, tool schemas/results, conversation
 history, or subprocess arguments. The sign-in decision call has no tools and
 receives only the chat message and safe conversation history. Before
-verification, Pi cannot access any banking tool and the common path is blocked.
+verification, Pi cannot access any personal banking tool and the fast path is blocked.
 On success, the app answers the original question using the verified customer.
 Pi's input stream is disconnected from the terminal or pipe, so it cannot
 consume later chat messages or secure input. The app reads Pi's structured JSON
@@ -122,12 +132,12 @@ continues. The app sends these pairs as labeled JSON context with each Pi
 request; Pi itself still runs with `--no-session`. Failed requests do not enter
 the history.
 
-The router selects tools from the current question. If it selects none, the app
-reuses the previous successful turn's tools, allowing follow-ups such as
-"What about Amazon?" after a spending question. Common-path turns also establish
-the corresponding banking tool for a later follow-up. An initial unrecognized
-request receives no banking tools. Pi uses the conversation to understand the
-question and fetches banking facts from the gateway.
+The router asks the small local model to choose one reviewed plan and extract
+its variables. Python then validates the complete request, amounts, dates, and
+filters before any gateway call. A rejected or unsupported plan falls back to
+Pi. Fast-path turns establish the corresponding banking tool for a later
+follow-up. Pi uses the conversation to understand fallback questions and fetches
+banking facts from the gateway.
 
 `/reset` clears message history and inherited tools. Customer identity comes
 only from successful local verification, and cannot change through chat or a
@@ -152,16 +162,17 @@ route, or the previous successful turn when the current route has no tools.
 Pi's file and shell tools are disabled.
 
 `get_transactions` lists matching mock transactions within an optional inclusive
-date range. It supports `both` (the default), `saving`, and `purchase` filters
-and an optional newest-first `limit`. Totals cover the returned transactions.
-A production gateway
-must query complete account history for the requested range.
+date range. It supports `both` (the default), `saving`, and `purchase` filters,
+amount and store filters, and an optional newest-first `limit`. Totals cover the
+returned transactions. A production gateway must query complete account history
+for the requested range.
 
 Edit `customer_service_policy.md` to change how Pi answers complex questions.
-The common intent path uses fixed response templates in `common_intents.py`.
+The validated fast path uses fixed response templates in `common_intents.py`.
 The policy guides Pi's output; verify important changes against sample customer
 questions with a configured Pi model before relying on them.
 
 Run the local regression and authentication checks with
-`python3 -m unittest discover -v`. The tests substitute Pi responses and exercise
-the local HTTP tool bridge without calling a model provider.
+`python3 -m unittest discover -v`. The fast-path tests use a fake LM Studio
+response; the Pi tests substitute Pi responses and exercise the local HTTP tool
+bridge without calling a model provider.

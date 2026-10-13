@@ -15,6 +15,10 @@ class BankingAgent:
         "account_balance": ("get_balance",),
         "recent_transactions": ("get_transactions",),
         "credit_card_summary": ("get_credit_card_summary",),
+        "get_balance": ("get_balance",),
+        "balance_after_spending": ("get_balance",),
+        "project_balance": ("get_balance",),
+        "query_transactions": ("get_transactions",),
     }
 
     def __init__(self):
@@ -119,7 +123,9 @@ class BankingAgent:
                     route.intent_type == IntentType.COMMON or bool(route.tools)
                 )
             elif route.intent_type == IntentType.COMMON:
-                answer = self.common_handler.handle(route.capability, self.customer_context)
+                answer = self.common_handler.handle(
+                    route.capability, self.customer_context, route.slots
+                )
                 tools = self.COMMON_TOOLS[route.capability]
             else:
                 tools = route.tools or self._previous_tools

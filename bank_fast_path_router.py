@@ -149,10 +149,16 @@ class TransactionDates:
 
 
 ISO = r"\d{4}-\d{2}-\d{2}"
+MONTH_NAMES = (
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+)
+NAMED_DATE = rf"\d{{4}}\s+(?:{'|'.join(MONTH_NAMES)})\s+\d{{1,2}}(?:st|nd|rd|th)?"
+EXPLICIT_DATE = rf"(?:{ISO}|{NAMED_DATE})"
 RECENT_DAYS = 10  # Product default: calendar dates including today.
 # Ordered longest/specific phrases first. Unsupported time expressions fail closed.
 TIME_PATTERNS = [
-    ("range", rf"\b(?:from\s+{ISO}\s+(?:to|through|until)\s+{ISO}|between\s+{ISO}\s+and\s+{ISO})\b"),
+    ("range", rf"\b(?:from\s+{EXPLICIT_DATE}\s+(?:to|through|until)\s+{EXPLICIT_DATE}|between\s+{EXPLICIT_DATE}\s+and\s+{EXPLICIT_DATE})\b"),
     ("bound", rf"\b(?:on\s+or\s+before|on\s+or\s+after|before|after|since|until|through|on)\s+{ISO}\b"),
     ("rolling", r"\b(?:(?:in|for|over|during)\s+)?(?:the\s+)?(?:past|last|previous|recent)\s+\d+\s+(?:days?|weeks?|months?|years?)\b"),
     ("recent", r"\b(?:(?:(?:in|for|over|during)\s+)?(?:the\s+)?recent\s+days\b|recent(?=\s+transactions?\b))"),
@@ -181,6 +187,20 @@ def shift_months(value: date, delta: int) -> date:
         raise ValueError("Date outside supported calendar")
     month = month0 + 1
     return date(year, month, min(value.day, calendar.monthrange(year, month)[1]))
+
+
+def parse_explicit_date(value: str) -> date:
+    if re.fullmatch(ISO, value):
+        return date.fromisoformat(value)
+    match = re.fullmatch(
+        rf"(\d{{4}})\s+({'|'.join(MONTH_NAMES)})\s+(\d{{1,2}})(?:st|nd|rd|th)?",
+        value,
+        re.I,
+    )
+    if not match:
+        raise ValueError("Unsupported explicit date")
+    year, month_name, day = match.groups()
+    return date(int(year), MONTH_NAMES.index(month_name.lower()) + 1, int(day))
 
 
 def resolve_transaction_dates(message: str, today: date) -> TransactionDates:
@@ -225,7 +245,7 @@ def resolve_transaction_dates(message: str, today: date) -> TransactionDates:
     start = end = None
     try:
         if kind == "range":
-            start, end = [date.fromisoformat(x) for x in ISO_DATE_RE.findall(phrase)]
+            start, end = [parse_explicit_date(x.group()) for x in re.finditer(EXPLICIT_DATE, phrase, re.I)]
         elif kind == "bound":
             boundary = date.fromisoformat(ISO_DATE_RE.search(phrase).group())
             operator = phrase[:phrase.index(boundary.isoformat())].strip()
@@ -344,7 +364,6 @@ def parse_with_lmstudio(
         temperature=0,
         max_tokens=260,
     )
-    print(f"LM Studio response: {response.choices[0].message.content}", file=sys.stderr)
     content = response.choices[0].message.content or ""
     route = Route.model_validate(extract_json(content))
     if route.plan_id == "query_transactions" and resolved is not None:
@@ -526,9 +545,9 @@ def route_request(
     try:
         today = today or date.today()
         normalized_message = normalize_written_amounts(message)
-        print(f"Normalized input: {normalized_message}", file=sys.stderr)
+        print(f"Normalized message: {normalized_message}", file=sys.stderr)
         proposal = parse_with_lmstudio(client, model_id, normalized_message, today)
-        print(f"proposal: {proposal.model_dump()}", file=sys.stderr)
+        print(f"Proposed route: {proposal.model_dump()}", file=sys.stderr)
         valid, reason = validate_route(normalized_message, proposal, today)
         result = proposal if valid else unknown(reason)
     except (ValueError, ValidationError, KeyError, IndexError) as exc:

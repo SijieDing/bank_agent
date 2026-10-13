@@ -64,8 +64,10 @@ def contains_credentials(text: str) -> bool:
         r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
         r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
     )
+    day = r"[0-9]{1,2}(?:st|nd|rd|th)?"
     remainder = re.sub(
-        r"\b" + month + r"\s+[0-9]{1,2},?\s+(?:19|20)[0-9]{2}\b",
+        r"\b(?:" + month + r"\s+" + day + r",?\s+(?:19|20)[0-9]{2}"
+        r"|(?:19|20)[0-9]{2}\s+" + month + r"\s+" + day + r")\b",
         "", remainder, flags=re.IGNORECASE,
     )
     amount = r"[0-9][0-9,]*(?:\.[0-9]{1,2})?"

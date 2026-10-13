@@ -1,5 +1,5 @@
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 
@@ -115,6 +115,9 @@ class BankingToolGateway:
         end_date: str | None = None,
         transaction_type: str = "both",
         limit: int | None = None,
+        minimum_amount: str | int | float | None = None,
+        maximum_amount: str | int | float | None = None,
+        store_name: str | None = None,
     ) -> dict[str, Any]:
         account_transactions = self._transactions(account_id)
         if transaction_type not in ("both", "saving", "purchase"):
@@ -129,6 +132,25 @@ class BankingToolGateway:
             not isinstance(end_date, str) or not end_date
         ):
             raise ValueError("end_date must be an ISO date")
+        try:
+            minimum = Decimal(str(minimum_amount)) if minimum_amount is not None else None
+            maximum = Decimal(str(maximum_amount)) if maximum_amount is not None else None
+        except (InvalidOperation, ValueError) as exc:
+            raise ValueError("Transaction amounts must be numbers") from exc
+        if minimum is not None and (
+            not minimum.is_finite() or not Decimal("0") < minimum <= Decimal("1000000")
+        ):
+            raise ValueError("minimum_amount must be between 0 and 1000000")
+        if maximum is not None and (
+            not maximum.is_finite() or not Decimal("0") < maximum <= Decimal("1000000")
+        ):
+            raise ValueError("maximum_amount must be between 0 and 1000000")
+        if maximum is not None and minimum is None:
+            raise ValueError("maximum_amount requires minimum_amount")
+        if minimum is not None and maximum is not None and minimum > maximum:
+            raise ValueError("minimum_amount must not exceed maximum_amount")
+        if store_name is not None and (not isinstance(store_name, str) or not store_name.strip()):
+            raise ValueError("store_name must be a non-empty string")
         try:
             start = date.fromisoformat(start_date) if start_date else None
             end = date.fromisoformat(end_date) if end_date else None
@@ -150,6 +172,24 @@ class BankingToolGateway:
             tx for tx in in_range
             if transaction_type == "both" or tx["type"] == transaction_type
         ), key=lambda tx: tx["date"], reverse=True)
+        if minimum is not None:
+            comparison = (
+                (lambda amount: amount >= minimum)
+                if maximum is not None
+                else (lambda amount: amount > minimum)
+            )
+            transactions = [
+                tx for tx in transactions if comparison(Decimal(str(tx["amount"])))
+            ]
+        if maximum is not None:
+            transactions = [
+                tx for tx in transactions if Decimal(str(tx["amount"])) <= maximum
+            ]
+        if store_name is not None:
+            transactions = [
+                tx for tx in transactions
+                if store_name.casefold() in tx["description"].casefold()
+            ]
         if limit is not None:
             transactions = transactions[:limit]
 
@@ -166,6 +206,9 @@ class BankingToolGateway:
             "end_date": end.isoformat() if end else None,
             "transaction_type": transaction_type,
             "limit": limit,
+            "minimum_amount": str(minimum) if minimum is not None else None,
+            "maximum_amount": str(maximum) if maximum is not None else None,
+            "store_name": store_name,
             "transactions": transactions,
             "total_saving": total("saving"),
             "total_purchase": total("purchase"),
