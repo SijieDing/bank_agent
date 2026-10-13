@@ -27,7 +27,7 @@ class CapabilityRouter:
             word in text for word in (
                 "afford", "enough", "mortgage", "upcoming", "after",
                 "spent", "spend", "spending", "saving", "saved", "search",
-                "compare", "can i", "买吗", "if", "when"
+                "compare", "can i", "if", "when"
             )
         )
 
@@ -35,7 +35,6 @@ class CapabilityRouter:
         if not complex_request and (
             "credit card balance" in text
             or "minimum payment" in text
-            or "信用卡余额" in text
         ):
             return RouteResult(
                 intent_type=IntentType.COMMON,
@@ -44,7 +43,7 @@ class CapabilityRouter:
             )
 
         if not complex_request and (
-            "balance" in text or "多少钱" in text or "余额" in text
+            "balance" in text
         ):
             return RouteResult(
                 intent_type=IntentType.COMMON,
@@ -55,7 +54,6 @@ class CapabilityRouter:
         if not complex_request and (
             "recent transaction" in text
             or "recent transactions" in text
-            or "最近交易" in text
         ):
             return RouteResult(
                 intent_type=IntentType.COMMON,
@@ -78,7 +76,7 @@ class CapabilityRouter:
         tools = []
         if any(word in text for word in (
             "balance", "afford", "enough", "can i buy", "can i purchase",
-            "mortgage", "付款", "remained", "spend", "remain", "pay", "payment", "transfer", "remain", "remained"
+            "mortgage", "remained", "spend", "remain", "pay", "payment", "transfer", "remain", "remained"
         )):
             tools.append("get_balance")
         if any(word in text for word in ("mortgage", "upcoming", "payment coming")):
@@ -103,7 +101,7 @@ class CapabilityRouter:
             tools.append("get_transactions")
         elif transaction_query:
             tools.append("search_transactions")
-        if any(word in text for word in ("card", "minimum payment", "信用卡")):
+        if any(word in text for word in ("card", "minimum payment")):
             tools.append("get_credit_card_summary")
         if any(phrase in text for phrase in (
             "contact", "phone", "telephone", "address", "location", "located",
