@@ -3,7 +3,7 @@
 
 Install: pip install 'openai>=1.0' 'pydantic>=2.0'
 Run: python bank_fast_path_router.py
-     python bank_fast_path_router.py '如果我支出160，账户还剩多少？' --balance 3000
+     python bank_fast_path_router.py 'If I spend 160, how much remains?' --balance 3000
      python bank_fast_path_router.py --model '<LM Studio model id>'
 
 This script NEVER connects to a bank or moves money. It only routes requests and
@@ -61,7 +61,7 @@ Output a single JSON object ONLY, with EXACTLY these keys:
  "fully_covered":true,"reason":"brief reason"}
 
 Rules:
-- Understand Chinese and English. Do NOT answer the question or execute tools.
+- Understand English. Do NOT answer the question or execute tools.
 - amount is a decimal STRING, never a JSON number. Copy numerical value from user; do not invent it.
 - duration_value is the original integer duration (10 years => 10, unit year), do not convert years to months.
 - If request asks for transfers, real payments, multiple expenses, comparisons, filters, conditional logic, interest, deposits, transactions, unsupported cadence, or additional operations: unknown, fully_covered=false, slots all null.
@@ -75,13 +75,13 @@ Rules:
   are unsupported.
 
 Examples:
-User: 我的余额是多少？
+User: What is my balance?
 Output: {"plan_id":"get_balance","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null},"fully_covered":true,"reason":"current balance"}
-User: 如果我支出160元，余额还剩多少？
+User: If I spend 160 dollars, how much remains?
 Output: {"plan_id":"balance_after_spending","slots":{"amount":"160","frequency":null,"duration_value":null,"duration_unit":null},"fully_covered":true,"reason":"one hypothetical expense"}
-User: 每个月花20元，10年后余额还剩多少？
+User: If I spend 20 dollars each month, how much remains after 10 years?
 Output: {"plan_id":"project_balance","slots":{"amount":"20","frequency":"monthly","duration_value":10,"duration_unit":"year"},"fully_covered":true,"reason":"one monthly expense"}
-User: 先支出100，再支出160，还剩多少？
+User: If I spend 100 and then 160, how much remains?
 Output: {"plan_id":"unknown","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null},"fully_covered":false,"reason":"multiple operations"}
 User: If I pay 1000 dollars, how much will be remained in my account?
 Output: {"plan_id":"balance_after_spending","slots":{"amount":"1000","frequency":null,"duration_value":null,"duration_unit":null},"fully_covered":true,"reason":"one hypothetical expense"}
@@ -90,19 +90,15 @@ Output: {"plan_id":"balance_after_spending","slots":{"amount":"1000","frequency"
 # Conservative exclusion patterns. False negatives are fine: Pi Agent handles them.
 # These are safeguards, NOT a complete semantic correctness proof.
 COMPLEX_RE = re.compile(
-    r"先.+(?:再|然后)|(?:再|然后).+(?:支出|花|消费)|转账|汇款|付款|真实扣款|"
-    r"利息|利率|贷款|存入|存款后|收入|退款|税费|比较|对比|超过|大于|少于|"
-    r"每周|每天|每季度|每年|每两个月|"
     r"\b(?:transfer|send money|pay someone|interest|loan|deposit|refund|compare|"
     r"weekly|daily|quarterly|annually|income|and then|after that|also)\b",
     re.IGNORECASE,
 )
 NUMBER_RE = re.compile(r"(?<![0-9A-Za-z_.])\d+(?:\.\d+)?(?![0-9A-Za-z_.])")
-MONTHLY_RE = re.compile(r"每\s*(?:个)?月|每月|monthly|per month|each month", re.I)
-YEAR_RE = re.compile(r"年|years?", re.I)
-MONTH_RE = re.compile(r"个月|月|months?", re.I)
+MONTHLY_RE = re.compile(r"monthly|per month|each month", re.I)
+YEAR_RE = re.compile(r"years?", re.I)
+MONTH_RE = re.compile(r"months?", re.I)
 SPENDING_RE = re.compile(
-    r"支出|花费|花掉|花|消费|"
     r"\b(?:spend|spent|expense|expenses|pay|paid|payment)\b",
     re.I
 )
