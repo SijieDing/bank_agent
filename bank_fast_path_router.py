@@ -31,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 PlanId = Literal[
     "get_balance", "balance_after_spending", "project_balance",
-    "query_transactions", "contact_information", "unknown",
+    "query_transactions", "latest_transaction", "contact_information", "unknown",
 ]
 
 # Only these reviewed templates are eligible for Fast Path. This is NOT a tool planner.
@@ -40,6 +40,7 @@ PLANS = {
     "balance_after_spending": "Calculate remaining balance after ONE hypothetical one-time expense or purchase budget ceiling. Requires amount.",
     "project_balance": "Calculate remaining balance after ONE hypothetical fixed MONTHLY expense over N months/years; no income, interest or other changes.",
     "query_transactions": "Query transactions by date range, amount range, amount threshold, and/or store name.",
+    "latest_transaction": "Return the requested number of newest transactions.",
     "contact_information": "Return the bank's full phone number, office address, and opening hours.",
 }
 
@@ -54,6 +55,7 @@ class Slots(BaseModel):
     minimum_amount: str | int | float | None = None
     maximum_amount: str | int | float | None = None
     store_name: str | None = None
+    limit: int | None = None
 
 class Route(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -69,11 +71,12 @@ Available reviewed plans:
 - balance_after_spending: Compute balance after exactly ONE hypothetical one-time expense or maximum purchase budget. Required: amount.
 - project_balance: Compute balance after exactly ONE hypothetical fixed MONTHLY expense for a specified duration in months or years. Required: amount, frequency=monthly, duration_value, duration_unit. No interest, income, deposits, other expenses, or compound conditions.
 - query_transactions: Query transactions using one or more supported filters: an inclusive ISO start/end date range, with either or both bounds; an inclusive minimum/maximum amount range; a strict amount-over threshold (minimum_amount only); or a store name.
+- latest_transaction: Return the requested number of newest transactions. Required: limit.
 - contact_information: Return the bank's complete contact information (phone number, office address, and opening hours). Use this for requests about any one or more of those contact details.
 
 Output a single JSON object ONLY, with EXACTLY these keys:
-{"plan_id":"get_balance|balance_after_spending|project_balance|query_transactions|contact_information|unknown",
- "slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null},
+{"plan_id":"get_balance|balance_after_spending|project_balance|query_transactions|latest_transaction|contact_information|unknown",
+ "slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null,"limit":null},
  "fully_covered":true,"reason":"brief reason"}
 
 Rules:
@@ -81,6 +84,7 @@ Rules:
 - amount is a decimal STRING, never a JSON number. Copy numerical value from user; do not invent it.
 - minimum_amount and maximum_amount are decimal STRINGS, never JSON numbers.
 - duration_value is the original integer duration (10 years => 10, unit year), do not convert years to months.
+- For latest_transaction, limit is the requested integer count, or 1 for a singular request without a count.
 - For "between 100 and/to 200 dollars", set minimum_amount="100" and maximum_amount="200". For "over 100 dollars", set minimum_amount="100" and maximum_amount=null.
 - Date filters are resolved by Python before this call. Copy the trusted date bounds supplied below exactly. Never calculate dates or invent a missing bound.
 - If request asks for transfers, real payments, multiple expenses, unrelated comparisons, unsupported transaction filters, conditional logic, interest, deposits, or additional operations: unknown, fully_covered=false, slots all null.
@@ -102,33 +106,35 @@ Rules:
 
 Examples:
 User: What is my balance?
-Output: {"plan_id":"get_balance","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null},"fully_covered":true,"reason":"current balance"}
+Output: {"plan_id":"get_balance","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null,"limit":null},"fully_covered":true,"reason":"current balance"}
 User: If I spend 160 dollars, how much remains?
-Output: {"plan_id":"balance_after_spending","slots":{"amount":"160","frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null},"fully_covered":true,"reason":"one hypothetical expense"}
+Output: {"plan_id":"balance_after_spending","slots":{"amount":"160","frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null,"limit":null},"fully_covered":true,"reason":"one hypothetical expense"}
 User: If I spend 20 dollars each month, how much remains after 10 years?
-Output: {"plan_id":"project_balance","slots":{"amount":"20","frequency":"monthly","duration_value":10,"duration_unit":"year","start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null},"fully_covered":true,"reason":"one monthly expense"}
+Output: {"plan_id":"project_balance","slots":{"amount":"20","frequency":"monthly","duration_value":10,"duration_unit":"year","start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null,"limit":null},"fully_covered":true,"reason":"one monthly expense"}
 User: If I spend 100 and then 160, how much remains?
-Output: {"plan_id":"unknown","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null},"fully_covered":false,"reason":"multiple operations"}
+Output: {"plan_id":"unknown","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null,"limit":null},"fully_covered":false,"reason":"multiple operations"}
 User: If I pay 1000 dollars, how much will be remained in my account?
-Output: {"plan_id":"balance_after_spending","slots":{"amount":"1000","frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null},"fully_covered":true,"reason":"one hypothetical expense"}
+Output: {"plan_id":"balance_after_spending","slots":{"amount":"1000","frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null,"limit":null},"fully_covered":true,"reason":"one hypothetical expense"}
 User: Do I have enough money to buy a bike which is 1000 dollars?
-Output: {"plan_id":"balance_after_spending","slots":{"amount":"1000","frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null},"fully_covered":true,"reason":"one exact-price purchase"}
+Output: {"plan_id":"balance_after_spending","slots":{"amount":"1000","frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null,"limit":null},"fully_covered":true,"reason":"one exact-price purchase"}
 User: Do I have enough money to buy a bike which is less than 1000 dollars?
-Output: {"plan_id":"balance_after_spending","slots":{"amount":"1000","frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null},"fully_covered":true,"reason":"one maximum-price purchase"}
+Output: {"plan_id":"balance_after_spending","slots":{"amount":"1000","frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null,"limit":null},"fully_covered":true,"reason":"one maximum-price purchase"}
 User: Show my transactions from 2026-01-01 to 2026-10-10.
-Output: {"plan_id":"query_transactions","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":"2026-01-01","end_date":"2026-10-10","minimum_amount":null,"maximum_amount":null,"store_name":null},"fully_covered":true,"reason":"transaction date range"}
+Output: {"plan_id":"query_transactions","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":"2026-01-01","end_date":"2026-10-10","minimum_amount":null,"maximum_amount":null,"store_name":null,"limit":null},"fully_covered":true,"reason":"transaction date range"}
 User: Show my transactions between 100 to 200 dollars.
-Output: {"plan_id":"query_transactions","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":"100","maximum_amount":"200","store_name":null},"fully_covered":true,"reason":"transaction amount range"}
+Output: {"plan_id":"query_transactions","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":"100","maximum_amount":"200","store_name":null,"limit":null},"fully_covered":true,"reason":"transaction amount range"}
 User: Show my transactions over 100 dollars.
-Output: {"plan_id":"query_transactions","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":"100","maximum_amount":null,"store_name":null},"fully_covered":true,"reason":"transaction amount threshold"}
+Output: {"plan_id":"query_transactions","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":"100","maximum_amount":null,"store_name":null,"limit":null},"fully_covered":true,"reason":"transaction amount threshold"}
 User: Show my transactions about Amazon.
-Output: {"plan_id":"query_transactions","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":"Amazon"},"fully_covered":true,"reason":"store transactions"}
+Output: {"plan_id":"query_transactions","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":"Amazon","limit":null},"fully_covered":true,"reason":"store transactions"}
 User: Show my transactions about Amazon from 2026-01-01 to 2026-10-10.
-Output: {"plan_id":"query_transactions","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":"2026-01-01","end_date":"2026-10-10","minimum_amount":null,"maximum_amount":null,"store_name":"Amazon"},"fully_covered":true,"reason":"store transactions in date range"}
+Output: {"plan_id":"query_transactions","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":"2026-01-01","end_date":"2026-10-10","minimum_amount":null,"maximum_amount":null,"store_name":"Amazon","limit":null},"fully_covered":true,"reason":"store transactions in date range"}
+User: Tell me the latest 5 transactions.
+Output: {"plan_id":"latest_transaction","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null,"limit":5},"fully_covered":true,"reason":"latest transactions"}
 User: What is your phone number?
-Output: {"plan_id":"contact_information","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null},"fully_covered":true,"reason":"bank contact information"}
+Output: {"plan_id":"contact_information","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null,"limit":null},"fully_covered":true,"reason":"bank contact information"}
 User: When do you open?
-Output: {"plan_id":"contact_information","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null},"fully_covered":true,"reason":"bank opening hours"}
+Output: {"plan_id":"contact_information","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null,"limit":null},"fully_covered":true,"reason":"bank opening hours"}
 """
 
 # Conservative exclusion patterns. False negatives are fine: Pi Agent handles them.
@@ -152,6 +158,11 @@ EXACT_AFFORDABILITY_RE = re.compile(
     re.I,
 )
 TRANSACTION_RE = re.compile(r"\btransactions?\b", re.I)
+LATEST_TRANSACTION_RE = re.compile(
+    r"^\s*(?:show|tell)\s+me\s+(?:my\s+|the\s+)?(?:latest|last)"
+    r"(?:\s+(?P<count>\d+))?\s+(?P<noun>transactions?|tranasactions?)\s*[?.!]*\s*$",
+    re.I,
+)
 OVER_RE = re.compile(r"\b(?:over|above|more than|greater than)\b", re.I)
 BETWEEN_RE = re.compile(r"\bbetween\b", re.I)
 CONTACT_RE = re.compile(
@@ -160,6 +171,17 @@ CONTACT_RE = re.compile(
     r"\b(?:when|what time)\s+(?:do|does)\s+(?:you|the (?:bank|office))\s+open\b",
     re.I,
 )
+
+
+def latest_transaction_limit(message: str) -> int | None:
+    match = LATEST_TRANSACTION_RE.fullmatch(message)
+    if not match:
+        return None
+    count = match.group("count")
+    if count is None and match.group("noun").lower().endswith("s"):
+        return None
+    limit = int(count or 1)
+    return limit if 1 <= limit <= 100 else None
 
 
 
@@ -419,6 +441,19 @@ def validate_route(
 
     slots = route.slots
     nums = [Decimal(x) for x in NUMBER_RE.findall(message)]
+    if route.plan_id == "latest_transaction":
+        if any(
+            value is not None
+            for name, value in slots.model_dump().items()
+            if name != "limit"
+        ):
+            return False, "Latest-transaction plan contains unexpected slots"
+        requested_limit = latest_transaction_limit(message)
+        if requested_limit is None:
+            return False, "Latest-transaction wording not confirmed"
+        if slots.limit != requested_limit:
+            return False, "Latest-transaction limit does not match request"
+        return True, ""
     if TRANSACTION_RE.search(message) and route.plan_id != "query_transactions":
         return False, "Transaction request must use the transaction plan"
 
@@ -440,6 +475,7 @@ def validate_route(
 
         if any(value is not None for value in (
             slots.amount, slots.frequency, slots.duration_value, slots.duration_unit,
+            slots.limit,
         )):
             return False, "Unexpected expense slots in transaction query"
         try:
@@ -533,7 +569,7 @@ def validate_route(
         if slots.frequency is not None or slots.duration_value is not None or slots.duration_unit is not None or any(
             value is not None for value in (
                 slots.start_date, slots.end_date,
-                slots.minimum_amount, slots.maximum_amount, slots.store_name,
+                slots.minimum_amount, slots.maximum_amount, slots.store_name, slots.limit,
             )
         ):
             return False, "Unexpected extra slots"
@@ -548,7 +584,7 @@ def validate_route(
     if route.plan_id == "project_balance":
         if any(value is not None for value in (
             slots.start_date, slots.end_date,
-            slots.minimum_amount, slots.maximum_amount, slots.store_name,
+            slots.minimum_amount, slots.maximum_amount, slots.store_name, slots.limit,
         )):
             return False, "Unexpected extra slots"
         if slots.frequency != "monthly" or not MONTHLY_RE.search(message):
@@ -599,7 +635,15 @@ def route_request_with_proposal(
             re.I,
         )
         minimum_price = re.search(r"\bat least\s+\$?\d", normalized_message, re.I)
-        if EXACT_AFFORDABILITY_RE.search(normalized_message) and len(numbers) == 1 and not minimum_price:
+        latest_limit = latest_transaction_limit(normalized_message)
+        if latest_limit is not None:
+            proposal = Route(
+                plan_id="latest_transaction",
+                slots=Slots(limit=latest_limit),
+                fully_covered=True,
+                reason="latest transactions",
+            )
+        elif EXACT_AFFORDABILITY_RE.search(normalized_message) and len(numbers) == 1 and not minimum_price:
             proposal = Route(
                 plan_id="balance_after_spending",
                 slots=Slots(amount=numbers[0]),
@@ -630,6 +674,10 @@ def preview(route: Route, balance: Decimal | None) -> dict:
     if route.plan_id == "unknown":
         return {"next": "pi_agent", "message": "Fallback to Pi Agent; no bank action executed"}
     if route.plan_id == "query_transactions":
+        return {"next": "bank_tool", "plan": route.plan_id,
+                "filters": route.slots.model_dump(exclude_none=True),
+                "message": "Validated route only. Connect your read-only transaction tool in your application."}
+    if route.plan_id == "latest_transaction":
         return {"next": "bank_tool", "plan": route.plan_id,
                 "filters": route.slots.model_dump(exclude_none=True),
                 "message": "Validated route only. Connect your read-only transaction tool in your application."}

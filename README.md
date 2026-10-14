@@ -69,11 +69,12 @@ is needed by returning `AUTHENTICATE` or `PUBLIC`. `AUTHENTICATE` immediately
 opens the hidden prompts; it does not depend on the model executing a tool.
 `PUBLIC` continues to a general answer with no personal banking tools. An
 invalid decision is retried once and then reported as an error. After successful
-sign-in, validated balance, hypothetical spending, monthly projection, and
-filtered transaction requests run without further Pi calls. Contact-information
-and credit-card-summary fast paths are intentionally deferred; those requests
-use the Pi fallback. Complex questions and contextual follow-ups also call Pi
-and its read-only banking tools. You should see output similar to:
+sign-in, validated balance, hypothetical spending, monthly projection, filtered
+transaction, and latest-N transaction requests run without further Pi calls.
+Contact-information requests use the public fast path without sign-in. The
+credit-card-summary fast path is intentionally deferred to Pi. Complex questions
+and contextual follow-ups also call Pi and its read-only banking tools. You should
+see output similar to:
 
 ```text
 You: What is my balance?
@@ -85,8 +86,7 @@ Route: common, Capability: get_balance, Confidence: 1.00
 Agent: Your available balance is CAD 5,320.45.
 ```
 
-Requests outside the four reviewed plans, such as "Tell me last 3 transactions,"
-use the Pi fallback.
+Requests outside the reviewed plans use the Pi fallback.
 
 ## Secure sign-in and demo users
 

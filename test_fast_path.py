@@ -144,6 +144,26 @@ class CapabilityRouterTests(unittest.TestCase):
         self.assertEqual(route.slots.amount, "10")
         client.chat.completions.create.assert_not_called()
 
+    def test_latest_transaction_phrasings_use_fast_path_without_model(self):
+        client = Mock()
+        router = CapabilityRouter(client=client, model_id="test-model")
+
+        cases = (
+            ("Show me my latest transaction", 1),
+            ("Show me my last tranasaction", 1),
+            ("Tell me the latest 5 transactions", 5),
+        )
+        for message, limit in cases:
+            with self.subTest(message=message):
+                route = router.route(message)
+
+                self.assertEqual(route.intent_type, IntentType.COMMON)
+                self.assertEqual(route.capability, "latest_transaction")
+                self.assertEqual(route.tools, ("get_transactions",))
+                self.assertEqual(route.slots, Slots(limit=limit))
+
+        client.chat.completions.create.assert_not_called()
+
     def test_maximum_purchase_price_uses_hypothetical_spending_plan(self):
         client = Mock()
 
@@ -357,6 +377,22 @@ class FastPathHandlerTests(unittest.TestCase):
         )
         self.assertIn("Amazon", answer)
         self.assertNotIn("Rogers", answer)
+
+    def test_latest_transaction_returns_one_newest_transaction(self):
+        answer = self.handler.handle("latest_transaction", self.context, Slots(limit=1))
+
+        self.assertEqual(
+            answer,
+            "Your latest transaction is 2026-10-07 - Costco (purchase): $128.32.",
+        )
+
+    def test_latest_transactions_honors_requested_limit(self):
+        answer = self.handler.handle("latest_transaction", self.context, Slots(limit=5))
+
+        self.assertEqual(answer.count("\n"), 5)
+        self.assertIn("2026-10-07 - Costco (purchase): $128.32", answer)
+        self.assertIn("2026-09-15 - Grocery (purchase): $92.50", answer)
+        self.assertNotIn("2026-09-02 - Savings transfer", answer)
 
     def test_single_minimum_is_strict_but_a_range_is_inclusive(self):
         threshold = self.gateway.get_transactions("CHK-001", minimum_amount="49.99")

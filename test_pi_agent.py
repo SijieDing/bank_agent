@@ -313,7 +313,7 @@ class PiBankingAgentTests(unittest.TestCase):
                 self.assertEqual(route.intent_type, IntentType.COMPLEX)
                 self.assertEqual(route.tools, tools)
 
-    def test_last_three_transactions_uses_get_transactions(self):
+    def test_last_three_transactions_uses_fast_path(self):
         from app import BankingAgent
         from router import IntentType
 
@@ -323,18 +323,15 @@ class PiBankingAgentTests(unittest.TestCase):
             "customer_id": "C10001", "default_account_id": "CHK-001", "default_card_id": "VISA-001",
         }
         route = agent.router.route(message)
-        self.assertEqual(route.intent_type, IntentType.COMPLEX)
+        self.assertEqual(route.intent_type, IntentType.COMMON)
+        self.assertEqual(route.capability, "latest_transaction")
+        self.assertEqual(route.slots.limit, 3)
         self.assertEqual(route.tools, ("get_transactions",))
-        with patch.object(agent.pi_agent, "handle", return_value=PiReply("Sign in", True)):
-            agent.handle(message)
-        self.assertTrue(agent.authenticate("4111111111111111", "1234"))
-        agent.reset()
-        with patch.object(agent.pi_agent, "handle", return_value=PiReply("Pi answer")) as pi_handle:
+        agent._customer_context = context
+        with patch.object(agent.pi_agent, "handle") as pi_handle:
             answer = agent.handle(message)
-        self.assertEqual(answer, "Pi answer")
-        pi_handle.assert_called_once_with(
-            message, context, ("get_transactions",), conversation_history=[]
-        )
+        self.assertEqual(answer.count("\n"), 3)
+        pi_handle.assert_not_called()
 
     def test_transactions_include_both_types_and_filtered_totals(self):
         gateway = BankingToolGateway()

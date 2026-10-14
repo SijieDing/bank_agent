@@ -88,6 +88,20 @@ class CommonIntentHandler:
                 "Your matching transactions are:\n" + "\n".join(lines)
             )
 
+        if capability == "latest_transaction":
+            limit = slots.limit if slots and slots.limit is not None else 1
+            data = self.gateway.get_transactions(account_id, limit=limit)
+            if not data["transactions"]:
+                return "No transactions were found."
+            lines = [
+                f"{tx['date']} - {tx['description']} ({tx['type']}): "
+                f"${tx['amount']:.2f}"
+                for tx in data["transactions"]
+            ]
+            if limit == 1:
+                return "Your latest transaction is " + lines[0] + "."
+            return "Your latest transactions are:\n" + "\n".join(lines)
+
         if capability == "recent_transactions":
             data = self.gateway.get_recent_transactions(account_id)
 
