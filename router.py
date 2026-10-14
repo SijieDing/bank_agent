@@ -1,3 +1,4 @@
+import json
 import os
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -6,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from openai import OpenAI, OpenAIError
 
-from bank_fast_path_router import Slots, route_request_with_proposal
+from bank_fast_path_router import Slots, preview, route_request_with_proposal
 
 
 class IntentType(str, Enum):
@@ -65,11 +66,18 @@ class CapabilityRouter:
     def route(self, message: str) -> RouteResult:
         try:
             today = self.today or datetime.now(self.business_timezone).date()
-            route, _, proposal = route_request_with_proposal(
+            route, elapsed_ms, proposal = route_request_with_proposal(
                 self.client, self.model_id, message, today
             )
         except (OpenAIError, OSError, RuntimeError) as exc:
             return self._fallback(f"Fast-path model unavailable: {exc}")
+
+        print(json.dumps({
+            "input": message,
+            "route": route.model_dump(),
+            "elapsed_ms": round(elapsed_ms, 1),
+            "execution": preview(route, None),
+        }, ensure_ascii=False, indent=2))
 
         if route.plan_id == "unknown":
             proposed_tools = self.PLAN_TOOLS.get(proposal.plan_id) if proposal else None

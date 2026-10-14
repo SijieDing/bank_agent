@@ -371,14 +371,26 @@ def parse_with_lmstudio(
 ) -> Route:
     today = today or date.today()
     resolved = None
+    date_resolution_error = None
     if TRANSACTION_RE.search(message):
-        resolved = resolve_transaction_dates(message, today)
-        message = resolved.model_message
+        try:
+            resolved = resolve_transaction_dates(message, today)
+        except ValueError as exc:
+            # A rejected fast path can still use the model proposal to narrow Pi's tools.
+            date_resolution_error = str(exc)
+        else:
+            message = resolved.model_message
     system_prompt = SYSTEM_PROMPT + f"\nToday's date is {today.isoformat()}."
     if resolved is not None:
         system_prompt += "\nTrusted transaction date bounds (copy exactly): " + json.dumps({
             "start_date": resolved.start_date, "end_date": resolved.end_date,
         })
+    elif date_resolution_error is not None:
+        system_prompt += (
+            "\nThe transaction date text could not be safely resolved. If query_transactions "
+            "is still the best matching plan, select it with fully_covered=false and null date "
+            "slots so its proposal can narrow the fallback tools."
+        )
     response = client.chat.completions.create(
         model=model_id,
         messages=[

@@ -1,5 +1,7 @@
+import io
 import json
 import unittest
+from contextlib import redirect_stdout
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -37,6 +39,47 @@ class CapabilityRouterTests(unittest.TestCase):
         self.assertEqual(route.capability, "balance_after_spending")
         self.assertEqual(route.slots.amount, "160")
         self.assertEqual(route.tools, ("get_balance",))
+
+    def test_app_router_prints_fast_path_result(self):
+        cases = (
+            (
+                "Do I have enough money to buy a bike 40.6 dollars?",
+                Route(
+                    plan_id="balance_after_spending",
+                    slots=Slots(amount="40.6"),
+                    fully_covered=True,
+                    reason="one exact-price purchase",
+                ),
+                "balance_after_spending",
+                "bank_tool",
+                "one exact-price purchase",
+            ),
+            (
+                "List all my transaction in Amazon",
+                Route(
+                    plan_id="query_transactions",
+                    slots=Slots(store_name="Amazon"),
+                    fully_covered=True,
+                    reason="store transactions",
+                ),
+                "unknown",
+                "pi_agent",
+                "Store filter wording not confirmed",
+            ),
+        )
+
+        for message, proposal, plan_id, next_step, reason in cases:
+            with self.subTest(plan_id=plan_id), redirect_stdout(io.StringIO()) as output:
+                CapabilityRouter(
+                    client=model_client(proposal), model_id="test-model"
+                ).route(message)
+
+            diagnostic = json.loads(output.getvalue())
+            self.assertEqual(diagnostic["input"], message)
+            self.assertEqual(diagnostic["route"]["plan_id"], plan_id)
+            self.assertEqual(diagnostic["route"]["reason"], reason)
+            self.assertEqual(diagnostic["execution"]["next"], next_step)
+            self.assertIsInstance(diagnostic["elapsed_ms"], float)
 
     def test_unreviewed_plan_falls_back_to_pi(self):
         proposal = Route(
@@ -149,6 +192,33 @@ class CapabilityRouterTests(unittest.TestCase):
         self.assertEqual(route.capability, "query_transactions")
         self.assertEqual(route.slots.start_date, "2026-10-01")
         self.assertEqual(route.slots.end_date, "2026-10-20")
+
+    def test_unsupported_date_syntax_still_uses_proposal_to_narrow_pi_tools(self):
+        message = "List all me transactions from 2026-10-1 to 2026-11-1"
+        proposal = Route(
+            plan_id="query_transactions",
+            slots=Slots(),
+            fully_covered=False,
+            reason="transaction date range",
+        )
+        client = model_client(proposal)
+
+        route = CapabilityRouter(
+            client=client, model_id="test-model", today=date(2026, 10, 13)
+        ).route(message)
+
+        self.assertEqual(route.intent_type, IntentType.COMPLEX)
+        self.assertEqual(route.tools, ("get_transactions",))
+        self.assertEqual(route.retry_tools, CapabilityRouter.FALLBACK_TOOLS)
+        self.assertIn("No fully covered reviewed plan", route.reason)
+        self.assertEqual(
+            client.chat.completions.create.call_args.kwargs["messages"][1]["content"],
+            message,
+        )
+        self.assertIn(
+            "select it with fully_covered=false",
+            client.chat.completions.create.call_args.kwargs["messages"][0]["content"],
+        )
 
     def test_contact_questions_use_the_public_contact_fast_path(self):
         proposal = Route(
