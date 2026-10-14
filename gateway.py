@@ -11,6 +11,57 @@ class BankingToolGateway:
     each banking operation.
     """
 
+    def __init__(self):
+        self.transfer_store = None
+
+    def enable_transfers(self, store):
+        self.transfer_store = store
+        store.seed(self.ACCOUNTS)
+
+    def list_transfer_accounts(self, owner):
+        with self.transfer_store.connect() as db:
+            rows = db.execute("SELECT account FROM accounts WHERE owner=?", (owner,)).fetchall()
+        return [{"account_id": row[0], "currency": "CAD"} for row in rows]
+
+    def resolve_transfer_recipient(self, email):
+        recipients = {
+            "dingsijie@gmail.com": "external-demo-001",
+            "abc@example.com": "external-demo-002",
+        }
+        if email not in recipients:
+            raise ValueError("Unknown recipient; use a registered mock recipient")
+        return recipients[email]
+
+    def validate_transfer(self, owner, draft, *, check_balance=True):
+        from workflows.models import TransferDraft, ValidatedTransfer
+        draft = TransferDraft.model_validate(draft.model_dump())
+        if draft.source_account_id not in {a["account_id"] for a in self.list_transfer_accounts(owner)}:
+            raise ValueError("Unauthorized source account")
+        if draft.amount is None or draft.currency != "CAD":
+            raise ValueError("Amount and CAD currency are required")
+        recipient = self.resolve_transfer_recipient(draft.recipient_email)
+        available, _ = self.transfer_store.balance(draft.source_account_id)
+        if check_balance and Decimal(str(available)) < draft.amount:
+            raise ValueError("Insufficient funds")
+        return ValidatedTransfer(**draft.model_dump(), recipient_id=recipient)
+
+    def submit_transfer(self, owner, key, transfer):
+        from workflows.models import TransferDraft
+        # Return a previously committed result before checking a now-reduced balance.
+        existing = self.transfer_store.status(owner, key)
+        if existing is not None:
+            return self.transfer_store.submit(owner, key, transfer)
+        validated = self.validate_transfer(owner, TransferDraft.model_validate(
+            transfer.model_dump(exclude={"recipient_id"})), check_balance=False)
+        if validated != transfer:
+            raise ValueError("Recipient details changed; confirm again")
+        return self.transfer_store.submit(owner, key, validated)
+
+    def get_transfer_status(self, owner, key):
+        # This synchronous local ledger can definitively establish non-submission.
+        # A remote adapter must return None when it cannot establish the outcome.
+        return self.transfer_store.status(owner, key) or {"status": "NOT_SUBMITTED"}
+
     # Keep the original demo account's history for existing callers.
     TRANSACTIONS = [
         {"description": "Costco", "amount": 128.32, "date": "2026-10-07", "type": "purchase"},
@@ -68,10 +119,18 @@ class BankingToolGateway:
         return self.ACCOUNTS[account_id]
 
     def _transactions(self, account_id: str) -> list[dict[str, Any]]:
-        return [dict(tx) for tx in self._account(account_id)["transactions"]]
+        rows = [dict(tx) for tx in self._account(account_id)["transactions"]]
+        if self.transfer_store:
+            for payload, result in self.transfer_store.transactions(account_id):
+                rows.append({"description": "Transfer to " + payload["recipient_email"],
+                             "amount": float(payload["amount"]), "date": result["date"],
+                             "type": "purchase", "transaction_id": result["transaction_id"]})
+        return sorted(rows, key=lambda tx: tx["date"], reverse=True)
 
     def get_balance(self, account_id: str) -> dict[str, Any]:
-        account = self._account(account_id)
+        account = dict(self._account(account_id))
+        if self.transfer_store:
+            account["available_balance"], account["current_balance"] = self.transfer_store.balance(account_id)
         return {
             "account_id": account_id,
             "available_balance": account["available_balance"],

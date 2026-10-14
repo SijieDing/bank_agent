@@ -11,7 +11,7 @@ This project demonstrates a simple banking agent architecture with:
 - Three isolated mock customers and banking APIs
 
 The fast path uses an OpenAI-compatible LM Studio server and a small local model
-(by default `qwen3.5-0.8b-mlx`). Complex requests require the
+(by default `qwen3.5-0.8b-mlx`). Transfers use a persistent LangGraph workflow with Pydantic-validated turn proposals. Complex requests require the
 [Pi CLI](https://pi.dev/docs/latest/cli) with a configured model and credentials.
 
 ## Architecture
@@ -115,7 +115,7 @@ demo; real authentication requires a bank identity service.
 Three invalid card/PIN pairs end the conversation. The user cannot change
 identity or sign in again during the conversation. `/reset` clears messages
 while keeping the verified user and failed-attempt count; it cannot reopen an
-ended conversation. Start a new app instance to begin a separate conversation.
+ended conversation. An unfinished transfer is retained and paused by `/reset` (an in-flight submission remains available for status reconciliation). Start a new app instance to begin a separate conversation.
 The attempt limit applies to this conversation, not across restarts.
 
 Do not paste credentials into chat. A local guard rejects ordinary card/PIN
@@ -145,7 +145,7 @@ fallback questions and fetches banking facts from the gateway.
 only from successful local verification, and cannot change through chat or a
 caller-supplied context. `BankingAgent.handle(message)` takes no customer context;
 `authenticate(card_number, pin)` is allowed only after Pi requests sign-in.
-There is no saved conversation or restart recovery.
+Chat messages are not saved. Transfer drafts and mock ledger outcomes are persisted separately, with fresh sign-in required after restart.
 
 ## Files
 
@@ -175,6 +175,108 @@ The policy guides Pi's output; verify important changes against sample customer
 questions with a configured Pi model before relying on them.
 
 Run the local regression and authentication checks with
-`python3 -m unittest discover -v`. The fast-path tests use a fake LM Studio
-response; the Pi tests substitute Pi responses and exercise the local HTTP tool
+`python3 -m unittest discover -v`. The fast-path and transfer tests use fake model
+responses; the Pi tests substitute Pi responses and exercise the local HTTP tool
 bridge without calling a model provider.
+
+
+## Multi-turn mock transfers
+
+The `transfer_money` workflow supports incomplete requests, field corrections,
+pause/resume, cancellation before submission, and explicit confirmation. The
+initial capability router recognizes a transfer request; a dedicated structured
+parser then interprets transfer turns. An active task is considered before the
+ordinary router, so short answers such as `500 dollars` fill the existing draft.
+Unrelated questions use the existing fast path/Pi integration and invalidate any
+pending confirmation. Amounts, recipients, ownership, and balance checks are
+validated by Python and the gateway, not trusted from model output.
+
+Example (after secure sign-in):
+
+```text
+You: I want to transfer some money to dingsijie@gmail.com.
+Agent: Please provide the amount.
+You: 500 dollars.
+Agent: Confirm transfer of CAD 500.00 from CHK-001 to dingsijie@gmail.com. Mock fee: CAD 0.00. Submit this transfer?
+You: Actually, make it 300.
+Agent: Confirm transfer of CAD 300.00 ...
+You: Pause the transfer.
+Agent: Transfer paused. Your draft is saved; say 'resume transfer' to continue.
+You: What is my balance?
+Agent: Your available balance is CAD 5,320.45.
+You: Resume the transfer.
+Agent: Confirm transfer of CAD 300.00 ...
+You: Yes.
+Agent: Transfer successful. Transaction ID: ...
+```
+
+Only `dingsijie@gmail.com` and `abc@example.com` are registered **fake external
+recipients**. No email is sent, no real account is contacted, and no real money
+moves. Each demo customer's single checking account is the default source.
+CAD is the explicit demo default, shown in every confirmation; other currencies
+are rejected. There are no fees. Outgoing mock transfers debit both available
+and current balances and appear as `purchase` transactions in existing queries.
+The mock settlement record represents payment to an external recipient; there
+is no real external settlement or recipient authentication.
+
+One unfinished transfer is allowed per conversation. A second request cannot
+overwrite it. An explicit modification invalidates the previous confirmation,
+and `confirm but change it to 400` only updates the draft. After an unrelated
+question, `yes` displays a fresh summary instead of submitting. Cancellation
+before submission moves no money; successful transfers cannot be cancelled.
+
+The existing credential guard rejects bare four-to-six-digit messages as
+possible PINs. For such amounts, enter `1000 dollars` rather than `1000`.
+
+### Storage and recovery
+
+Default storage is `~/.bank_agent/transfers.sqlite3`. Set `BANK_WORKFLOW_DB` to
+choose another persistent SQLite file. Task snapshots and the mock ledger use
+this file; LangGraph checkpoints use the adjacent `.checkpoints` database.
+The application prints a conversation ID on startup. Reuse it to restore a task:
+
+```bash
+BANK_CONVERSATION_ID=<previous-conversation-id> python3 app.py
+```
+
+Sign in again, then say `resume transfer` or ask for its status. A different
+customer cannot load the task. Credentials and authenticated sessions are never
+persisted. Restored drafts need a fresh confirmation. Previously authorized
+in-flight submissions are reconciled rather than creating another submission.
+`/reset` clears chat and retains/pauses the draft; resume or cancel it explicitly.
+
+LangGraph runs an apply node and conditional validation, submission, or
+reconciliation nodes. Each conversational waiting state ends the graph turn;
+the next message supplies a typed event against the durable task snapshot.
+This uses turn-based checkpointing rather than replaying an interrupted node.
+Task snapshots are authoritative during crash recovery. Every submission intent
+is saved before the gateway call. A SQLite transaction atomically records its
+idempotency key, outcome, and debit. Duplicate confirmations or retries cannot
+apply that debit twice; keys cannot be reused with changed payloads.
+
+The synchronous mock ledger can definitively report `NOT_SUBMITTED`; recovery
+may then retry the already-authorized submission with its original key, or cancel
+it on request. A remote adapter must return an unknown result when it cannot
+establish the outcome. Unknown outcomes remain in `RECONCILING`, with no blind
+retry or false cancellation claim. Do not replace this behavior with a new key.
+
+Local workflow turns are serialized with a file lock (macOS/Linux). This is a
+single-host demo, not a distributed production banking service. Before using a
+real backend, implement its authorization, settlement, idempotency, transaction
+status and cancellation contracts. Model interpretation still needs validation
+with the configured local model; unit tests do not establish its language accuracy.
+
+### Implementation and tests
+
+- `workflows/models.py`: incomplete draft, turn proposal, validated transfer, task.
+- `workflows/parser.py`: one structured model call per active workflow turn.
+- `workflows/manager.py`: owner-bound task coordination and checkpoint setup.
+- `workflows/transfer.py`: LangGraph transitions and confirmation enforcement.
+- `workflows/store.py`: SQLite snapshots and atomic mock ledger.
+- `test_transfer_workflow.py`: offline workflow, gateway, parser, and app tests.
+
+Run `python3 -m unittest test_transfer_workflow -v` for the new offline tests.
+Run `python3 -m unittest discover -v` for the entire existing suite. Some legacy
+router tests require a running model despite the old README's description, and
+some Pi tests assert behavior absent on main (thinking output and flags). See
+`TRANSFER_VALIDATION.md` for the baseline comparison performed for this change.

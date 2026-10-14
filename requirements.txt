@@ -1,3 +1,5 @@
 openai>=1.0
 pydantic>=2.0
 text2num>=3.0
+langgraph>=1.2,<2
+langgraph-checkpoint-sqlite>=3.1,<4

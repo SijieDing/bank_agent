@@ -1,4 +1,11 @@
 import getpass
+import os
+from uuid import uuid4
+from pathlib import Path
+
+from workflows.store import WorkflowStore
+from workflows.manager import WorkflowManager
+from workflows.parser import TransferParser
 import threading
 
 from authentication import authenticate_card, contains_credentials
@@ -23,9 +30,14 @@ class BankingAgent:
         "contact_information": ("get_contact_information",),
     }
 
-    def __init__(self):
+    def __init__(self, workflow_db=None, conversation_id=None):
         self.router = CapabilityRouter()
         self.gateway = BankingToolGateway()
+        self.conversation_id = conversation_id or os.getenv("BANK_CONVERSATION_ID") or uuid4().hex
+        self.workflow_store = WorkflowStore(workflow_db or os.getenv(
+            "BANK_WORKFLOW_DB", str(Path.home() / ".bank_agent" / "transfers.sqlite3")))
+        self.gateway.enable_transfers(self.workflow_store)
+        self._workflow = None
         self.common_handler = CommonIntentHandler(self.gateway)
         self.pi_agent = PiBankingAgent(self.gateway)
         self.history: list[dict[str, str]] = []
@@ -36,6 +48,18 @@ class BankingAgent:
         self._failed_auth_attempts = 0
         self._closed = False
         self._lock = threading.RLock()
+
+    @property
+    def workflow(self):
+        if self._workflow is None:
+            self._workflow = WorkflowManager(
+                self.gateway, self.workflow_store,
+                TransferParser(self.router.client, self.router.model_id), self.conversation_id)
+        return self._workflow
+
+    def close(self):
+        if self._workflow:
+            self._workflow.close()
 
     @property
     def customer_context(self) -> dict[str, str] | None:
@@ -57,11 +81,14 @@ class BankingAgent:
     def closed(self) -> bool:
         return self._closed
 
-    def reset(self) -> None:
+    def reset(self) -> str:
         # Clearing messages must not allow account switching or bypass the attempt limit.
         with self._lock:
             self.history.clear()
             self._previous_tools = ()
+            if self._customer_context:
+                return self.workflow.reset(self._customer_context["customer_id"])
+            return ""
 
     def authenticate(self, card_number: str, pin: str) -> bool:
         with self._lock:
@@ -99,6 +126,13 @@ class BankingAgent:
             if self._authentication_requested:
                 return "Use the secure card and PIN prompts to finish signing in."
 
+            if self._customer_context and self.workflow.get_task(self._customer_context["customer_id"]):
+                response = self.workflow.handle(message, self.customer_context)
+                if response is not None:
+                    self.history.append({"user": message, "assistant": response})
+                    del self.history[:-self.MAX_HISTORY_TURNS]
+                    return response
+
             route = self.router.route(message)
             print(
                 f"Route: {route.intent_type.value}, "
@@ -106,7 +140,16 @@ class BankingAgent:
                 f"Confidence: {route.confidence:.2f}"
             )
 
-            if route.capability == "contact_information":
+            if route.capability == "transfer_money":
+                if self._customer_context is None:
+                    self._authentication_requested = True
+                    self._replay_after_authentication = True
+                    return "Please sign in using the hidden local prompts to start your transfer."
+                answer = self.workflow.handle(message, self.customer_context, starting=True)
+                if answer is None:
+                    answer = "Please clarify your transfer request."
+                tools = ()
+            elif route.capability == "contact_information":
                 answer = self.common_handler.handle(route.capability, None)
                 tools = ()
             elif self._customer_context is None:
@@ -158,6 +201,7 @@ class BankingAgent:
 def main() -> None:
     agent = BankingAgent()
 
+    print(f"Conversation ID: {agent.conversation_id}. Set BANK_CONVERSATION_ID to resume after restart.")
     print("Banking chat. Enter /reset to clear messages or /exit to quit.")
     print("Enter card numbers and PINs only in the hidden secure sign-in prompts.")
     while True:
@@ -169,8 +213,8 @@ def main() -> None:
                 print("Goodbye.")
                 break
             if message.lower() == "/reset":
-                agent.reset()
-                print("Conversation cleared.")
+                notice = agent.reset()
+                print("Conversation cleared." + (notice or ""))
                 continue
             answer = agent.handle(message)
             print("Agent:", answer)
@@ -196,6 +240,8 @@ def main() -> None:
             break
         except (RuntimeError, ValueError, OSError) as exc:
             print("Error:", exc)
+
+    agent.close()
 
 
 if __name__ == "__main__":

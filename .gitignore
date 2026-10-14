@@ -1,2 +1,7 @@
 __pycache__/
 *.pyc
+
+# Local demo ledgers, checkpoints, and lock files
+*.sqlite*
+*.checkpoints*
+*.lock

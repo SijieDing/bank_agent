@@ -13,6 +13,7 @@ from bank_fast_path_router import Slots, preview, route_request_with_proposal
 class IntentType(str, Enum):
     COMMON = "common"
     COMPLEX = "complex"
+    WORKFLOW = "workflow"
 
 
 @dataclass
@@ -79,6 +80,9 @@ class CapabilityRouter:
             "elapsed_ms": round(elapsed_ms, 1),
             "execution": preview(route, None),
         }, ensure_ascii=False, indent=2))
+
+        if proposal is not None and proposal.plan_id == "transfer_money":
+            return RouteResult(IntentType.WORKFLOW, "transfer_money", 1.0)
 
         if route.plan_id == "unknown":
             proposed_tools = self.PLAN_TOOLS.get(proposal.plan_id) if proposal else None

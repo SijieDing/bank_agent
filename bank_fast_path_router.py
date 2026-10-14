@@ -31,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 PlanId = Literal[
     "get_balance", "balance_after_spending", "project_balance",
-    "query_transactions", "latest_transaction", "contact_information", "unknown",
+    "query_transactions", "latest_transaction", "contact_information", "transfer_money", "unknown",
 ]
 
 # Only these reviewed templates are eligible for Fast Path. This is NOT a tool planner.
@@ -67,6 +67,7 @@ class Route(BaseModel):
 SYSTEM_PROMPT = """You are a CONSERVATIVE bank request router, not a general assistant.
 Select ONE existing plan ONLY if it covers the ENTIRE user request. Otherwise choose unknown.
 Available reviewed plans:
+- transfer_money: Start an actual money transfer, including incomplete requests, or resume/cancel/check a saved transfer workflow. Keep slots empty. The separate workflow collects details and requires confirmation. Not hypothetical spending or transfer history queries.
 - get_balance: Query the current account balance only. No account selection, dates, or other actions.
 - balance_after_spending: Compute balance after exactly ONE hypothetical one-time expense or maximum purchase budget. Required: amount.
 - project_balance: Compute balance after exactly ONE hypothetical fixed MONTHLY expense for a specified duration in months or years. Required: amount, frequency=monthly, duration_value, duration_unit. No interest, income, deposits, other expenses, or compound conditions.
@@ -75,7 +76,7 @@ Available reviewed plans:
 - contact_information: Return the bank's complete contact information (phone number, office address, and opening hours). Use this for requests about any one or more of those contact details.
 
 Output a single JSON object ONLY, with EXACTLY these keys:
-{"plan_id":"get_balance|balance_after_spending|project_balance|query_transactions|latest_transaction|contact_information|unknown",
+{"plan_id":"get_balance|balance_after_spending|project_balance|query_transactions|latest_transaction|contact_information|transfer_money|unknown",
  "slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null,"limit":null},
  "fully_covered":true,"reason":"brief reason"}
 
