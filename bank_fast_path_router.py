@@ -571,10 +571,11 @@ def _validated_transaction_amount(value: str | int | float | None) -> Decimal | 
     return amount
 
 
-def route_request(
+def route_request_with_proposal(
     client: OpenAI, model_id: str, message: str, today: date | None = None,
-) -> tuple[Route, float]:
+) -> tuple[Route, float, Route | None]:
     start = time.perf_counter()
+    proposal = None
     try:
         today = today or date.today()
         normalized_message = normalize_written_amounts(message)
@@ -603,7 +604,14 @@ def route_request(
         result = proposal if valid else unknown(reason)
     except (ValueError, ValidationError, KeyError, IndexError) as exc:
         result = unknown(f"Model output invalid: {type(exc).__name__}: {exc}")
-    return result, (time.perf_counter() - start) * 1000
+    return result, (time.perf_counter() - start) * 1000, proposal
+
+
+def route_request(
+    client: OpenAI, model_id: str, message: str, today: date | None = None,
+) -> tuple[Route, float]:
+    route, elapsed_ms, _ = route_request_with_proposal(client, model_id, message, today)
+    return route, elapsed_ms
 
 
 def preview(route: Route, balance: Decimal | None) -> dict:

@@ -114,6 +114,7 @@ class BankingAgent:
                     if route.tools and set(route.tools) <= set(PiBankingAgent.PUBLIC_TOOLS)
                     else ()
                 )
+                print(f"Pi tools: {tools}")
                 reply = self.pi_agent.handle(
                     message, None, tools,
                     conversation_history=self.history.copy(),
@@ -130,10 +131,21 @@ class BankingAgent:
                 tools = self.COMMON_TOOLS[route.capability]
             else:
                 tools = route.tools or self._previous_tools
-                reply = self.pi_agent.handle(
-                    message, self.customer_context, tools,
-                    conversation_history=self.history.copy(),
-                )
+                try:
+                    print(f"Pi tools: {tools}")
+                    reply = self.pi_agent.handle(
+                        message, self.customer_context, tools,
+                        conversation_history=self.history.copy(),
+                    )
+                except RuntimeError:
+                    if not route.retry_tools or route.retry_tools == tools:
+                        raise
+                    tools = route.retry_tools
+                    print(f"Pi tools: {tools}")
+                    reply = self.pi_agent.handle(
+                        message, self.customer_context, tools,
+                        conversation_history=self.history.copy(),
+                    )
                 answer = reply.answer
 
             self.history.append({"user": message, "assistant": answer})

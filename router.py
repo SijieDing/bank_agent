@@ -1,5 +1,4 @@
 import os
-import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
@@ -7,14 +6,7 @@ from zoneinfo import ZoneInfo
 
 from openai import OpenAI, OpenAIError
 
-from bank_fast_path_router import Slots, route_request
-
-
-TEMPORAL_CONTACT_RE = re.compile(
-    r"\b(?:do|does|will)\s+(?:you|the (?:bank|office))\s+(?:be\s+)?open\b|"
-    r"\bare\s+(?:you|the (?:bank|office))\s+open\b",
-    re.IGNORECASE,
-)
+from bank_fast_path_router import Slots, route_request_with_proposal
 
 
 class IntentType(str, Enum):
@@ -30,6 +22,7 @@ class RouteResult:
     tools: tuple[str, ...] = ()
     slots: Slots = field(default_factory=Slots)
     reason: str = ""
+    retry_tools: tuple[str, ...] = ()
 
 
 class CapabilityRouter:
@@ -72,12 +65,15 @@ class CapabilityRouter:
     def route(self, message: str) -> RouteResult:
         try:
             today = self.today or datetime.now(self.business_timezone).date()
-            route, _ = route_request(self.client, self.model_id, message, today)
+            route, _, proposal = route_request_with_proposal(
+                self.client, self.model_id, message, today
+            )
         except (OpenAIError, OSError, RuntimeError) as exc:
-            return self._fallback(message, f"Fast-path model unavailable: {exc}")
+            return self._fallback(f"Fast-path model unavailable: {exc}")
 
         if route.plan_id == "unknown":
-            return self._fallback(message, route.reason)
+            proposed_tools = self.PLAN_TOOLS.get(proposal.plan_id) if proposal else None
+            return self._fallback(route.reason, proposed_tools)
 
         return RouteResult(
             intent_type=IntentType.COMMON,
@@ -88,16 +84,14 @@ class CapabilityRouter:
             reason=route.reason,
         )
 
-    def _fallback(self, message: str, reason: str) -> RouteResult:
-        tools = (
-            ("get_contact_information",)
-            if TEMPORAL_CONTACT_RE.search(message)
-            else self.FALLBACK_TOOLS
-        )
+    def _fallback(
+        self, reason: str, proposed_tools: tuple[str, ...] | None = None,
+    ) -> RouteResult:
         return RouteResult(
             intent_type=IntentType.COMPLEX,
             capability="banking_reasoning",
             confidence=0.0,
-            tools=tools,
+            tools=proposed_tools or self.FALLBACK_TOOLS,
+            retry_tools=self.FALLBACK_TOOLS if proposed_tools else (),
             reason=reason,
         )

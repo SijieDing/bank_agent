@@ -134,10 +134,12 @@ the history.
 
 The router asks the small local model to choose one reviewed plan and extract
 its variables. Python then validates the complete request, amounts, dates, and
-filters before any gateway call. A rejected or unsupported plan falls back to
-Pi. Fast-path turns establish the corresponding banking tool for a later
-follow-up. Pi uses the conversation to understand fallback questions and fetches
-banking facts from the gateway.
+filters before any gateway call. A rejected known proposal falls back to Pi
+with only that plan's corresponding tools; if that attempt fails for a signed-in
+customer, Pi retries with the full tool set. Missing or unsupported proposals
+use the full set immediately. Fast-path turns establish the corresponding
+banking tool for a later follow-up. Pi uses the conversation to understand
+fallback questions and fetches banking facts from the gateway.
 
 `/reset` clears message history and inherited tools. Customer identity comes
 only from successful local verification, and cannot change through chat or a

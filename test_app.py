@@ -212,18 +212,22 @@ class AuthenticationTests(BankingAgentTestCase):
 
     def test_temporal_hours_question_uses_pi_with_only_the_public_contact_tool(self):
         question = "Do you open tomorrow?"
-        with patch.object(self.agent.router, "route", return_value=RouteResult(
-            intent_type=IntentType.COMPLEX,
-            capability="banking_reasoning",
-            confidence=0.0,
-            tools=("get_contact_information",),
-        )):
+        with (
+            patch.object(self.agent.router, "route", return_value=RouteResult(
+                intent_type=IntentType.COMPLEX,
+                capability="banking_reasoning",
+                confidence=0.0,
+                tools=("get_contact_information",),
+            )),
+            patch("builtins.print") as output,
+        ):
             answer = self.agent.handle(question)
 
         self.assertEqual(answer, "Pi answer")
         self.pi_handle.assert_called_once_with(
             question, None, ("get_contact_information",), conversation_history=[]
         )
+        output.assert_any_call("Pi tools: ('get_contact_information',)")
         self.common_handle.assert_not_called()
         self.assertFalse(self.agent.authentication_requested)
 
@@ -329,6 +333,32 @@ class ConversationTests(BankingAgentTestCase):
         self.agent.handle("What about Amazon?")
 
         self.assertEqual(self.pi_handle.call_args.args[2], ("get_transactions",))
+
+    def test_rejected_proposal_retries_pi_with_full_tool_set(self):
+        question = "Can I afford it?"
+        route = RouteResult(
+            intent_type=IntentType.COMPLEX,
+            capability="banking_reasoning",
+            confidence=0.0,
+            tools=("get_balance",),
+            retry_tools=self.agent.router.FALLBACK_TOOLS,
+        )
+        self.pi_handle.side_effect = [RuntimeError("first call failed"), PiReply("Retry answer")]
+
+        with (
+            patch.object(self.agent.router, "route", return_value=route),
+            patch("builtins.print") as output,
+        ):
+            answer = self.agent.handle(question)
+
+        self.assertEqual(answer, "Retry answer")
+        self.assertEqual(
+            [recorded.args[2] for recorded in self.pi_handle.call_args_list],
+            [("get_balance",), self.agent.router.FALLBACK_TOOLS],
+        )
+        self.assertEqual(self.agent.history, [{"user": question, "assistant": "Retry answer"}])
+        output.assert_any_call("Pi tools: ('get_balance',)")
+        output.assert_any_call(f"Pi tools: {self.agent.router.FALLBACK_TOOLS}")
 
     def test_history_keeps_ten_complete_turns(self):
         for index in range(12):

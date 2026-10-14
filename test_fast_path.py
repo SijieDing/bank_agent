@@ -50,7 +50,8 @@ class CapabilityRouterTests(unittest.TestCase):
         self.assertEqual(route.intent_type, IntentType.COMPLEX)
         self.assertEqual(route.capability, "banking_reasoning")
         self.assertEqual(route.confidence, 0.0)
-        self.assertIn("get_balance", route.tools)
+        self.assertEqual(route.tools, CapabilityRouter.FALLBACK_TOOLS)
+        self.assertEqual(route.retry_tools, ())
 
     def test_invalid_model_claim_is_rejected_by_python_validation(self):
         proposal = Route(
@@ -65,6 +66,8 @@ class CapabilityRouterTests(unittest.TestCase):
         ).route("If I spend 160 dollars, how much remains?")
 
         self.assertEqual(route.intent_type, IntentType.COMPLEX)
+        self.assertEqual(route.tools, ("get_balance",))
+        self.assertEqual(route.retry_tools, CapabilityRouter.FALLBACK_TOOLS)
         self.assertIn("does not match", route.reason)
 
     def test_exact_price_affordability_uses_hypothetical_spending_plan(self):
@@ -185,6 +188,22 @@ class CapabilityRouterTests(unittest.TestCase):
         self.assertEqual(route.capability, "banking_reasoning")
         self.assertEqual(route.tools, ("get_contact_information",))
 
+    def test_rejected_close_proposal_uses_only_its_corresponding_tool(self):
+        proposal = Route(
+            plan_id="contact_information",
+            slots=Slots(),
+            fully_covered=True,
+            reason="bank opening hours",
+        )
+        router = CapabilityRouter(client=model_client(proposal), model_id="test-model")
+
+        route = router.route("When do you close today?")
+
+        self.assertEqual(route.intent_type, IntentType.COMPLEX)
+        self.assertEqual(route.tools, ("get_contact_information",))
+        self.assertEqual(route.retry_tools, CapabilityRouter.FALLBACK_TOOLS)
+        self.assertIn("wording not confirmed", route.reason)
+
     def test_unavailable_small_model_falls_back_to_pi(self):
         client = Mock()
         client.chat.completions.create.side_effect = OSError("offline")
@@ -192,7 +211,22 @@ class CapabilityRouterTests(unittest.TestCase):
         route = CapabilityRouter(client=client, model_id="test-model").route("Hello")
 
         self.assertEqual(route.intent_type, IntentType.COMPLEX)
+        self.assertEqual(route.tools, CapabilityRouter.FALLBACK_TOOLS)
+        self.assertEqual(route.retry_tools, ())
         self.assertIn("unavailable", route.reason)
+
+    def test_invalid_model_output_has_no_proposal_and_uses_full_tool_set(self):
+        client = Mock()
+        client.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="not json"))]
+        )
+
+        route = CapabilityRouter(client=client, model_id="test-model").route("Hello")
+
+        self.assertEqual(route.intent_type, IntentType.COMPLEX)
+        self.assertEqual(route.tools, CapabilityRouter.FALLBACK_TOOLS)
+        self.assertEqual(route.retry_tools, ())
+        self.assertIn("Model output invalid", route.reason)
 
 
 class FastPathHandlerTests(unittest.TestCase):
