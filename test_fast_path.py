@@ -4,7 +4,7 @@ from datetime import date
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from bank_fast_path_router import Route, Slots
+from bank_fast_path_router import Route, Slots, route_request
 from app import BankingAgent
 from common_intents import CommonIntentHandler
 from gateway import BankingToolGateway
@@ -67,6 +67,51 @@ class CapabilityRouterTests(unittest.TestCase):
         self.assertEqual(route.intent_type, IntentType.COMPLEX)
         self.assertIn("does not match", route.reason)
 
+    def test_exact_price_affordability_uses_hypothetical_spending_plan(self):
+        proposal = Route(
+            plan_id="balance_after_spending",
+            slots=Slots(amount="1000"),
+            fully_covered=True,
+            reason="one exact-price purchase",
+        )
+        router = CapabilityRouter(client=model_client(proposal), model_id="test-model")
+
+        route = router.route(
+            "Do I have enough money to buy a bike which is 1000 dollars?"
+        )
+
+        self.assertEqual(route.intent_type, IntentType.COMMON)
+        self.assertEqual(route.capability, "balance_after_spending")
+        self.assertEqual(route.slots.amount, "1000")
+        self.assertEqual(route.tools, ("get_balance",))
+
+    def test_exact_price_affordability_does_not_depend_on_model_generalization(self):
+        client = Mock()
+
+        route, _ = route_request(
+            client,
+            "test-model",
+            "Do I have enough money to buy a bike which is 10 dollars?",
+        )
+
+        self.assertEqual(route.plan_id, "balance_after_spending")
+        self.assertEqual(route.slots.amount, "10")
+        client.chat.completions.create.assert_not_called()
+
+    def test_maximum_purchase_price_uses_hypothetical_spending_plan(self):
+        client = Mock()
+
+        route, _ = route_request(
+            client,
+            "test-model",
+            "Do I have enough money to buy a bike which is less than 40.6 dollars?",
+        )
+
+        self.assertEqual(route.plan_id, "balance_after_spending")
+        self.assertEqual(route.slots.amount, "40.6")
+        self.assertEqual(route.reason, "one maximum-price purchase")
+        client.chat.completions.create.assert_not_called()
+
     def test_transaction_dates_and_store_are_preserved(self):
         proposal = Route(
             plan_id="query_transactions",
@@ -124,6 +169,21 @@ class CapabilityRouterTests(unittest.TestCase):
                 self.assertEqual(route.intent_type, IntentType.COMMON)
                 self.assertEqual(route.capability, "contact_information")
                 self.assertEqual(route.tools, ("get_contact_information",))
+
+    def test_temporal_opening_question_falls_back_to_pi_with_public_tool(self):
+        proposal = Route(
+            plan_id="contact_information",
+            slots=Slots(),
+            fully_covered=True,
+            reason="bank opening hours",
+        )
+        router = CapabilityRouter(client=model_client(proposal), model_id="test-model")
+
+        route = router.route("Do you open tomorrow?")
+
+        self.assertEqual(route.intent_type, IntentType.COMPLEX)
+        self.assertEqual(route.capability, "banking_reasoning")
+        self.assertEqual(route.tools, ("get_contact_information",))
 
     def test_unavailable_small_model_falls_back_to_pi(self):
         client = Mock()

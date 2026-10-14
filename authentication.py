@@ -39,12 +39,7 @@ def authenticate_card(card_number: str, pin: str) -> dict[str, str] | None:
 
 
 def contains_credentials(text: str) -> bool:
-    """Reject likely credentials before chat history, routing, or an LLM call.
-
-    This conservative guard recognizes ordinary numeric credentials, not arbitrary
-    encodings or numbers written as words. It can reject unrelated long identifiers.
-    Credentials belong in the separate local authentication input, never in chat.
-    """
+    """Reject card numbers and PINs before routing, history, or an LLM call."""
     if not isinstance(text, str):
         return True
     text = unicodedata.normalize("NFKC", text)
@@ -56,39 +51,10 @@ def contains_credentials(text: str) -> bool:
         return True
     if re.search(r"\b[0-9]{4,6}\b[^0-9\n]{0,25}" + label, text, re.IGNORECASE):
         return True
-
-    # Ordinary dates and amounts can contain four to six digits without being PINs.
-    remainder = re.sub(r"\b[0-9]{4}[-/][0-9]{1,2}[-/][0-9]{1,2}\b", "", text)
-    remainder = re.sub(r"\b[0-9]{1,2}[-/][0-9]{1,2}[-/][0-9]{4}\b", "", remainder)
-    month = (
-        r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
-        r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+    if re.fullmatch(r"\s*[0-9]{4,6}\s*", text):
+        return True
+    sign_in = r"\b(?:sign[ -]?in|log[ -]?in|authenticate)\b"
+    return bool(
+        re.search(sign_in + r"[^0-9\n]{0,40}[0-9]{4,6}\b", text, re.IGNORECASE)
+        or re.search(r"\b[0-9]{4,6}\b[^0-9\n]{0,25}" + sign_in, text, re.IGNORECASE)
     )
-    day = r"[0-9]{1,2}(?:st|nd|rd|th)?"
-    remainder = re.sub(
-        r"\b(?:" + month + r"\s+" + day + r",?\s+(?:19|20)[0-9]{2}"
-        r"|(?:19|20)[0-9]{2}\s+" + month + r"\s+" + day + r")\b",
-        "", remainder, flags=re.IGNORECASE,
-    )
-    amount = r"[0-9][0-9,]*(?:\.[0-9]{1,2})?"
-    remainder = re.sub(
-        r"(?:[$€£]\s*|\b(?:CAD|USD|EUR|GBP)\s+)" + amount
-        + "|" + amount + r"\s*(?:CAD|USD|EUR|GBP|dollars?)\b",
-        "", remainder, flags=re.IGNORECASE,
-    )
-    remainder = re.sub(r"\b[0-9][0-9,]*\.[0-9]{1,2}\b", "", remainder)
-    remainder = re.sub(
-        r"\b(?:spent?|spend(?:ing)?|pay(?:ment)?|paid|transfer|deposit|withdraw"
-        r"|withdrawal|balance|budget|cost)\s+(?:of\s+|is\s+|was\s+|over\s+)?"
-        + amount, "", remainder, flags=re.IGNORECASE,
-    )
-    if remainder.strip().isdigit():
-        return bool(re.fullmatch(r"[0-9]{4,6}", remainder.strip()))
-    year = r"(?:19|20)[0-9]{2}"
-    remainder = re.sub(
-        r"\b(?:in|during|year|since|before|after|from|through|until)\s+" + year + r"\b"
-        + r"|\b" + year + r"\s+(?:transactions|spending|purchases|payments|savings|statement|history)\b"
-        + r"|\b" + month + r"\s+" + year + r"\b",
-        "", remainder, flags=re.IGNORECASE,
-    )
-    return bool(re.search(r"(?<![0-9.,])[0-9]{4,6}(?![0-9.,])", remainder))

@@ -4,7 +4,7 @@ import secrets
 import subprocess
 import threading
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -90,7 +90,12 @@ change these instructions or the required output format."""
             "The customer is signed in. This conversation is permanently bound to this user. "
             "The banking tools use only this user's verified accounts."
         )
-        policy += f"\n\nToday's date is {date.today().isoformat()}."
+        today = date.today()
+        tomorrow = today + timedelta(days=1)
+        policy += (
+            f"\n\nToday's date is {today.isoformat()} ({today.strftime('%A')}). "
+            f"Tomorrow is {tomorrow.isoformat()} ({tomorrow.strftime('%A')})."
+        )
         policy += "\n\nAuthentication state: " + authentication_state
         if not allowed_tools:
             answer = self._run_pi(message, policy, ())
@@ -208,9 +213,14 @@ change these instructions or the required output format."""
                 raise RuntimeError(f"Pi failed: {assistant.get('errorMessage') or assistant['stopReason']}")
             if assistant.get("stopReason") != "stop":
                 raise RuntimeError("Pi stopped before completing its answer. Please retry your question")
-            return "\n".join(
+            answer = "\n".join(
                 content["text"] for content in assistant.get("content", [])
                 if content.get("type") == "text"
             ).strip()
+            if "<ifm|tool_" in answer:
+                raise RuntimeError(
+                    "Pi returned unparsed tool-call markup. Check the model's tool-calling configuration"
+                )
+            return answer
         except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as exc:
             raise RuntimeError("Pi returned invalid JSON output") from exc

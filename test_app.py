@@ -210,6 +210,23 @@ class AuthenticationTests(BankingAgentTestCase):
         self.assertFalse(self.agent.authentication_requested)
         self.assertIsNone(self.agent.customer_context)
 
+    def test_temporal_hours_question_uses_pi_with_only_the_public_contact_tool(self):
+        question = "Do you open tomorrow?"
+        with patch.object(self.agent.router, "route", return_value=RouteResult(
+            intent_type=IntentType.COMPLEX,
+            capability="banking_reasoning",
+            confidence=0.0,
+            tools=("get_contact_information",),
+        )):
+            answer = self.agent.handle(question)
+
+        self.assertEqual(answer, "Pi answer")
+        self.pi_handle.assert_called_once_with(
+            question, None, ("get_contact_information",), conversation_history=[]
+        )
+        self.common_handle.assert_not_called()
+        self.assertFalse(self.agent.authentication_requested)
+
     def test_credentials_in_chat_are_rejected_before_routing_or_model(self):
         messages = (
             "4111111111111111", "My card is 4111 1111 1111 1111",
@@ -227,6 +244,18 @@ class AuthenticationTests(BankingAgentTestCase):
             self.pi_handle.assert_not_called()
             self.common_handle.assert_not_called()
             self.assertEqual(self.agent.history, [])
+
+    def test_four_digit_purchase_amount_is_not_rejected_as_a_pin(self):
+        question = "Do I have enough money to buy a bike which is less than 1000?"
+        route = RouteResult(IntentType.COMPLEX, "banking_reasoning", 0.0)
+
+        with patch.object(self.agent.router, "route", return_value=route):
+            answer = self.agent.handle(question)
+
+        self.assertEqual(answer, "Pi answer")
+        self.pi_handle.assert_called_once_with(
+            question, None, (), conversation_history=[]
+        )
 
 
 class ConversationTests(BankingAgentTestCase):

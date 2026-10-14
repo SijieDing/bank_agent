@@ -42,7 +42,7 @@ class AuthenticationTests(unittest.TestCase):
             "41  11  11  11  11  11  11  11", "41--11--11--11--11--11--11--11",
             "1111 2222 3333", "PIN: 1234", "my pin number is 2345",
             "My card number is 1111", "2345 is my pin", "3456",
-            "Please use 4567 to sign in", "Use 2026 to sign in", "Use 123456", "１２３４", "١٢٣٤",
+            "Please use 4567 to sign in", "Use 2026 to sign in", "Use 123456 to sign in", "１２３４", "١٢٣٤",
             "My PIN is 2026", "Pin 1234 dollars", "pin $1234",
         ]:
             with self.subTest(message=message):
@@ -60,6 +60,8 @@ class AuthenticationTests(unittest.TestCase):
             "Transfer CAD 5000", "Payment of 5000 USD", "I paid 5000 dollars",
             "My balance is 5000.45", "My balance is 5000", "I spent 5000 last month",
             "Search purchases greater than $1,500", "Transfer 1000",
+            "Do I have enough money to buy a bike which is less than 1000?",
+            "I want to buy a bike for 1000", "Can I afford a 1000 bike?",
             "Did I spend €1500 or £1800?", "Show my savings transfers",
         ]:
             with self.subTest(message=message):

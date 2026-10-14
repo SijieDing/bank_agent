@@ -1,6 +1,7 @@
 import json
 import subprocess
 import unittest
+from datetime import date, timedelta
 from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -147,6 +148,16 @@ class PiBankingAgentTests(unittest.TestCase):
             )
             policy = command[command.index("--system-prompt") + 1]
             self.assertIn("does not require sign-in", policy)
+            today = date.today()
+            tomorrow = today + timedelta(days=1)
+            self.assertIn(
+                f"Today's date is {today.isoformat()} ({today.strftime('%A')}).",
+                policy,
+            )
+            self.assertIn(
+                f"Tomorrow is {tomorrow.isoformat()} ({tomorrow.strftime('%A')}).",
+                policy,
+            )
             request = Request(
                 env["BANK_AGENT_URL"],
                 data=json.dumps({"tool": "get_contact_information"}).encode(),
@@ -240,6 +251,12 @@ class PiBankingAgentTests(unittest.TestCase):
         self.assertIn("--mode", run.call_args.args[0])
         self.assertIn("--no-tools", run.call_args.args[0])
         self.assertEqual(run.call_args.args[0][run.call_args.args[0].index("--thinking") + 1], "medium")
+
+    def test_unparsed_tool_call_markup_is_not_returned_to_the_customer(self):
+        markup = "<ifm|tool_calls>\n<ifm|tool_call>contact_info\n</ifm|tool_call>"
+        with patch("pi_agent.subprocess.run", return_value=pi_result(markup)):
+            with self.assertRaisesRegex(RuntimeError, "unparsed tool-call markup"):
+                PiBankingAgent(BankingToolGateway())._run_pi("Hello", "Policy", ())
 
     def test_json_output_prints_completed_thinking_content(self):
         message = {

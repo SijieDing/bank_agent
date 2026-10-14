@@ -37,7 +37,7 @@ PlanId = Literal[
 # Only these reviewed templates are eligible for Fast Path. This is NOT a tool planner.
 PLANS = {
     "get_balance": "Query the CURRENT account balance. No other operation.",
-    "balance_after_spending": "Calculate remaining balance after ONE hypothetical one-time expense. Requires amount.",
+    "balance_after_spending": "Calculate remaining balance after ONE hypothetical one-time expense or purchase budget ceiling. Requires amount.",
     "project_balance": "Calculate remaining balance after ONE hypothetical fixed MONTHLY expense over N months/years; no income, interest or other changes.",
     "query_transactions": "Query transactions by date range, amount range, amount threshold, and/or store name.",
     "contact_information": "Return the bank's full phone number, office address, and opening hours.",
@@ -66,7 +66,7 @@ SYSTEM_PROMPT = """You are a CONSERVATIVE bank request router, not a general ass
 Select ONE existing plan ONLY if it covers the ENTIRE user request. Otherwise choose unknown.
 Available reviewed plans:
 - get_balance: Query the current account balance only. No account selection, dates, or other actions.
-- balance_after_spending: Compute balance after exactly ONE hypothetical one-time expense. Required: amount.
+- balance_after_spending: Compute balance after exactly ONE hypothetical one-time expense or maximum purchase budget. Required: amount.
 - project_balance: Compute balance after exactly ONE hypothetical fixed MONTHLY expense for a specified duration in months or years. Required: amount, frequency=monthly, duration_value, duration_unit. No interest, income, deposits, other expenses, or compound conditions.
 - query_transactions: Query transactions using one or more supported filters: an inclusive ISO start/end date range, with either or both bounds; an inclusive minimum/maximum amount range; a strict amount-over threshold (minimum_amount only); or a store name.
 - contact_information: Return the bank's complete contact information (phone number, office address, and opening hours). Use this for requests about any one or more of those contact details.
@@ -88,6 +88,9 @@ Rules:
 - Do not choose a plan just because words are similar. Be conservative.
 - Hypothetical spending questions such as "If I pay X, how much
   will remain?" belong to balance_after_spending.
+- Affordability questions with one exact purchase price or upper budget, such as
+  "Can I afford a 1000 dollar bike?" or "Can I afford a bike under 1000?",
+  also belong to balance_after_spending. Put that price or ceiling in amount.
 - "If" alone does not make a request unsupported conditional logic.
 - Distinguish calculating the effect of a payment from asking
   you to execute a payment. Only actual payment instructions
@@ -108,6 +111,10 @@ User: If I spend 100 and then 160, how much remains?
 Output: {"plan_id":"unknown","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null},"fully_covered":false,"reason":"multiple operations"}
 User: If I pay 1000 dollars, how much will be remained in my account?
 Output: {"plan_id":"balance_after_spending","slots":{"amount":"1000","frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null},"fully_covered":true,"reason":"one hypothetical expense"}
+User: Do I have enough money to buy a bike which is 1000 dollars?
+Output: {"plan_id":"balance_after_spending","slots":{"amount":"1000","frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null},"fully_covered":true,"reason":"one exact-price purchase"}
+User: Do I have enough money to buy a bike which is less than 1000 dollars?
+Output: {"plan_id":"balance_after_spending","slots":{"amount":"1000","frequency":null,"duration_value":null,"duration_unit":null,"start_date":null,"end_date":null,"minimum_amount":null,"maximum_amount":null,"store_name":null},"fully_covered":true,"reason":"one maximum-price purchase"}
 User: Show my transactions from 2026-01-01 to 2026-10-10.
 Output: {"plan_id":"query_transactions","slots":{"amount":null,"frequency":null,"duration_value":null,"duration_unit":null,"start_date":"2026-01-01","end_date":"2026-10-10","minimum_amount":null,"maximum_amount":null,"store_name":null},"fully_covered":true,"reason":"transaction date range"}
 User: Show my transactions between 100 to 200 dollars.
@@ -137,8 +144,12 @@ MONTHLY_RE = re.compile(r"monthly|per month|each month", re.I)
 YEAR_RE = re.compile(r"years?", re.I)
 MONTH_RE = re.compile(r"months?", re.I)
 SPENDING_RE = re.compile(
-    r"\b(?:spend|spent|expense|expenses|pay|paid|payment)\b",
+    r"\b(?:spend|spent|expense|expenses|pay|paid|payment|buy)\b",
     re.I
+)
+EXACT_AFFORDABILITY_RE = re.compile(
+    r"\bdo\s+i\s+have\s+enough(?:\s+money)?\s+to\s+buy\b",
+    re.I,
 )
 TRANSACTION_RE = re.compile(r"\btransactions?\b", re.I)
 OVER_RE = re.compile(r"\b(?:over|above|more than|greater than)\b", re.I)
@@ -516,6 +527,8 @@ def validate_route(
             return False, "Unexpected extra slots"
         if len(nums) != 1 or nums[0] != amount:
             return False, "Amount does not match unique number in request"
+        if re.search(r"\bat least\s+\$?\d", message, re.I):
+            return False, "Minimum purchase price is not a supported budget ceiling"
         if MONTHLY_RE.search(message):
             return False, "Recurring expense requires different plan"
         return True, ""
@@ -566,7 +579,25 @@ def route_request(
         today = today or date.today()
         normalized_message = normalize_written_amounts(message)
         print(f"Normalized message: {normalized_message}", file=sys.stderr)
-        proposal = parse_with_lmstudio(client, model_id, normalized_message, today)
+        numbers = NUMBER_RE.findall(normalized_message)
+        maximum_price = re.search(
+            r"\b(?:under|below|less than|at most)\s+\$?\d",
+            normalized_message,
+            re.I,
+        )
+        minimum_price = re.search(r"\bat least\s+\$?\d", normalized_message, re.I)
+        if EXACT_AFFORDABILITY_RE.search(normalized_message) and len(numbers) == 1 and not minimum_price:
+            proposal = Route(
+                plan_id="balance_after_spending",
+                slots=Slots(amount=numbers[0]),
+                fully_covered=True,
+                reason=(
+                    "one maximum-price purchase"
+                    if maximum_price else "one exact-price purchase"
+                ),
+            )
+        else:
+            proposal = parse_with_lmstudio(client, model_id, normalized_message, today)
         print(f"Proposed route: {proposal.model_dump()}", file=sys.stderr)
         valid, reason = validate_route(normalized_message, proposal, today)
         result = proposal if valid else unknown(reason)
