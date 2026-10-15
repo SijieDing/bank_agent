@@ -346,5 +346,21 @@ class DeterministicSlotTests(unittest.TestCase):
         self.assertNotIn('amount', slots)
 
 
+    def test_bare_control_words_and_contact_skip_model(self):
+        from workflows.models import TransferTask
+        task = TransferTask(owner="C10001", conversation_id="c", status="AWAITING_CONFIRMATION")
+        for msg, want in [("pause", "pause"), ("Cancel the transfer", "cancel"),
+                          ("resume transfer", "resume"),
+                          ("Can I go to your office to do such transfer now?", "other"),
+                          ("When do you open?", "other")]:
+            parser = self._parser('{"action":"other","changes":{}}')
+            self.assertEqual(parser.parse(msg, task).action, want)
+            parser.client.chat.completions.create.assert_not_called()
+        # An email-bearing message is a workflow turn, not a contact question.
+        turn = self._parser('{"action":"update","changes":{"recipient_email":"a@b.com"}}').parse(
+            "send to a@b.com office", task)
+        self.assertEqual(turn.action, "update")
+
+
 if __name__ == '__main__':
     unittest.main()

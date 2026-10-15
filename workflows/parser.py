@@ -3,6 +3,7 @@ import json
 import re
 
 from bank_contracts import TransferDraft
+from bank_fast_path_router import CONTACT_RE
 from workflows.models import TransferTurn
 
 # The 0.8B model reliably drops or mangles the unbroken email token, so the
@@ -18,6 +19,27 @@ CONFIRM_RE = re.compile(
 )
 # A request for another transfer after the current one has finished.
 NEW_TRANSFER_RE = re.compile(r"\btransfer\b", re.I)
+# Bare control words for the current task, forced deterministically like CONFIRM_RE:
+# the 0.8B model frequently emits invalid JSON for one-word inputs.
+CONTROL_RE = {
+    "pause": re.compile(r"^(?:pause|hold)\b[.!?\s]*$", re.I),
+    "cancel": re.compile(r"^(?:cancel\b.*|abort|never\s?mind)$", re.I),
+    "resume": re.compile(r"^(?:resume\b.*|continue)$", re.I),
+}
+
+
+def _deterministic_turn(message, task):
+    """Zero-model turns: bare control words and contact questions."""
+    if task is None or task.terminal:
+        return None
+    for action, pattern in CONTROL_RE.items():
+        if pattern.match(message.strip()):
+            return TransferTurn(action=action)
+    # A contact question ("can I go to your office...") is not a workflow turn;
+    # 'other' lets the manager fall through to normal routing.
+    if CONTACT_RE.search(message) and not EMAIL_RE.search(message):
+        return TransferTurn(action="other")
+    return None
 
 
 def _deterministic_slots(message, base):
@@ -71,6 +93,9 @@ class TransferParser:
         self.client, self.model = client, model
 
     def parse(self, message, task=None):
+        turn = _deterministic_turn(message, task)
+        if turn is not None:
+            return turn
         context = None if task is None else {
             "status": task.status, "draft": task.draft.model_dump(mode="json"),
             "pending_question": task.pending_question,
