@@ -192,7 +192,7 @@ change these instructions or the required output format."""
         tool_flags = ["--tools", ",".join(allowed_tools)] if allowed_tools else ["--no-tools"]
         command = [
             "pi", *tool_flags, "--print", "--mode", "json", "--no-session", "--no-extensions",
-            "--no-skills", "--no-context-files", "--no-prompt-templates",
+            "--no-skills", "--no-context-files", "--no-prompt-templates", "--thinking", "medium",
             "--extension", str(extension), "--system-prompt", system_prompt, "--", message,
         ]
         try:
@@ -219,6 +219,12 @@ change these instructions or the required output format."""
                 raise RuntimeError(f"Pi failed: {assistant.get('errorMessage') or assistant['stopReason']}")
             if assistant.get("stopReason") != "stop":
                 raise RuntimeError("Pi stopped before completing its answer. Please retry your question")
+            thinking = "\n".join(
+                content["thinking"] for content in assistant.get("content", [])
+                if content.get("type") == "thinking" and content.get("thinking")
+            ).strip()
+            if thinking:
+                print("Pi thinking:", thinking)
             answer = "\n".join(
                 content["text"] for content in assistant.get("content", [])
                 if content.get("type") == "text"

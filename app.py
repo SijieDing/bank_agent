@@ -126,7 +126,8 @@ class BankingAgent:
             if self._authentication_requested:
                 return "Use the secure card and PIN prompts to finish signing in."
 
-            if self._customer_context and self.workflow.get_task(self._customer_context["customer_id"]):
+            task = self.workflow.get_task(self._customer_context["customer_id"]) if self._customer_context else None
+            if task and not task.terminal:
                 response = self.workflow.handle(message, self.customer_context)
                 if response is not None:
                     self.history.append({"user": message, "assistant": response})
@@ -169,12 +170,21 @@ class BankingAgent:
                     route.intent_type == IntentType.COMMON or bool(route.tools)
                 )
             elif route.intent_type == IntentType.COMMON:
-                answer = self.common_handler.handle(
-                    route.capability, self.customer_context, route.slots
-                )
+                if route.capability in (
+                    "account_balance", "recent_transactions", "credit_card_summary"
+                ):
+                    answer = self.common_handler.handle(route.capability, self.customer_context)
+                else:
+                    answer = self.common_handler.handle(
+                        route.capability, self.customer_context, route.slots
+                    )
                 tools = self.COMMON_TOOLS[route.capability]
             else:
-                tools = route.tools or self._previous_tools
+                tools = (
+                    self._previous_tools
+                    if route.tools == self.router.FALLBACK_TOOLS and self._previous_tools
+                    else route.tools or self._previous_tools
+                )
                 try:
                     print(f"Pi tools: {tools}")
                     reply = self.pi_agent.handle(

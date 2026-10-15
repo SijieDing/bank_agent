@@ -120,7 +120,7 @@ class BankingToolGateway:
     def submit_transfer(self, owner, key, transfer):
         self._owner(owner)
         return self._request("POST", "/transfers",
-                             transfer.model_dump(mode="json", exclude={"recipient_id"}), key=key)
+                             transfer.model_dump(mode="json", exclude={"recipient_id", "fee"}), key=key)
 
     def get_transfer_status(self, owner, key):
         self._owner(owner)

@@ -52,5 +52,6 @@ class ValidatedTransfer(BaseModel):
     recipient_id: str
     amount: Decimal
     currency: Literal["CAD"]
+    fee: Decimal = Decimal("0.00")
 
 

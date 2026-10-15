@@ -334,7 +334,9 @@ class PiBankingAgentTests(unittest.TestCase):
         self.assertEqual(route.capability, "latest_transaction")
         self.assertEqual(route.slots.limit, 3)
         self.assertEqual(route.tools, ("get_transactions",))
-        agent._customer_context = context
+        agent._customer_context = agent.gateway.authenticate("4111111111111111", "1234")
+        self.addCleanup(agent.close)
+        self.assertEqual(agent._customer_context, context)
         with patch.object(agent.pi_agent, "handle") as pi_handle:
             answer = agent.handle(message)
         self.assertEqual(answer.count("\n"), 3)

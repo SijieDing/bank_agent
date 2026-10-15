@@ -6,7 +6,7 @@ import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from uuid import uuid4
 from typing import Any
@@ -139,7 +139,8 @@ class BankRepository:
             raise ValueError("Unknown recipient; use a registered mock recipient")
         if check_balance and row["available"] < int(draft.amount * 100):
             raise ValueError("Insufficient funds")
-        return ValidatedTransfer(**draft.model_dump(), recipient_id=recipient["id"])
+        fee = (draft.amount * Decimal("0.01")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return ValidatedTransfer(**draft.model_dump(), recipient_id=recipient["id"], fee=fee)
 
     def validate_transfer(self, owner, draft):
         with self.connect() as db:

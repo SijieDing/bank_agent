@@ -56,6 +56,10 @@ class TransferTests(unittest.TestCase):
         self.assertEqual(len([tx for tx in self.gateway.get_transactions('CHK-001')['transactions'] if 'transaction_id' in tx]), 1)
         self.assertIn('Transfer to', self.gateway.get_transactions('CHK-001')['transactions'][0]['description'])
 
+    def test_confirmation_shows_computed_fee(self):
+        self.assertIn('Mock fee: CAD 5.00.', self.start())  # 1% of 500
+        self.assertIn('Mock fee: CAD 2.00.', self.turn('update', {'amount': '200'}))  # 1% of 200
+
     def test_missing_amount_and_recipient(self):
         self.assertIn('amount', self.start(amount=None))
         self.assertIn('Confirm transfer', self.turn('update', {'amount': '500'}))
@@ -255,6 +259,91 @@ class TransferTests(unittest.TestCase):
         self.assertIsNone(restarted.customer_context)
         with patch.object(restarted.router, 'route', return_value=route):
             self.assertIn('sign in', restarted.handle('resume transfer'))
+
+    def test_message_after_finished_transfer_goes_to_router(self):
+        agent = BankingAgent(self.store.path, 'post-transfer-conversation', self.service.url)
+        self.addCleanup(agent.close)
+        with patch.object(agent.router, 'route', return_value=RouteResult(IntentType.WORKFLOW, 'transfer_money', 1)):
+            self.assertIn('sign in', agent.handle('transfer 500 to dingsijie@gmail.com'))
+            self.assertTrue(agent.authenticate('4111111111111111', '1234'))
+            with patch.object(agent.workflow.parser, 'parse', return_value=TransferTurn(
+                    action='start', changes=TransferDraft(amount='500', recipient_email='dingsijie@gmail.com'))):
+                self.assertIn('Confirm transfer', agent.handle('transfer 500 to dingsijie@gmail.com'))
+            # Complete it so the stored task is terminal.
+            with patch.object(agent.workflow.parser, 'parse', return_value=TransferTurn(action='confirm')):
+                self.assertIn('Transfer successful', agent.handle('yes'))
+        # A normal question must now reach the router, not the transfer workflow.
+        with patch.object(agent.common_handler, 'handle', return_value='CONTACT_ANSWER'), \
+             patch.object(agent.router, 'route', return_value=RouteResult(IntentType.COMMON, 'contact_information', 1)):
+            self.assertEqual(agent.handle('Tell me your open hours'), 'CONTACT_ANSWER')
+
+
+class DeterministicSlotTests(unittest.TestCase):
+    def _parser(self, model_json):
+        from unittest.mock import MagicMock
+        from workflows.parser import TransferParser
+        client = MagicMock()
+        resp = MagicMock()
+        resp.choices = [MagicMock(message=MagicMock(content=model_json))]
+        client.chat.completions.create.return_value = resp
+        return TransferParser(client, "model")
+
+    def test_bare_yes_forces_confirm_only_when_awaiting(self):
+        from workflows.models import TransferTask
+        awaiting = TransferTask(owner="C10001", conversation_id="c",
+                                draft=TransferDraft(amount="100", recipient_email="dingsijie@gmail.com",
+                                                    source_account_id="CHK-001"),
+                                status="AWAITING_CONFIRMATION", confirmation_session="s")
+        # Model misreads a bare "Yes" as a no-op update; we still confirm.
+        self.assertEqual(self._parser('{"action":"update","changes":{}}').parse("Yes", awaiting).action, "confirm")
+        collecting = TransferTask(owner="C10001", conversation_id="c",
+                                  draft=TransferDraft(amount="100"), status="COLLECTING")
+        self.assertEqual(self._parser('{"action":"update","changes":{}}').parse("Yes", collecting).action, "update")
+
+    def test_new_transfer_forced_after_terminal_task(self):
+        from decimal import Decimal
+        from workflows.models import TransferTask
+        done = TransferTask(owner="C10001", conversation_id="c",
+                            draft=TransferDraft(amount="100", recipient_email="dingsijie@gmail.com",
+                                                source_account_id="CHK-001"),
+                            status="SUCCEEDED")
+        # Model is unsure (returns "other"); a fresh transfer request still starts.
+        turn = self._parser('{"action":"other","changes":{}}').parse(
+            "I want to transfer 100 dollar to the email dingsijie@gmail.com", done)
+        self.assertEqual(turn.action, "start")
+        self.assertEqual(turn.changes.amount, Decimal("100"))
+        self.assertEqual(turn.changes.recipient_email, "dingsijie@gmail.com")
+        # An unrelated question after a done transfer must not start a new one.
+        self.assertEqual(self._parser('{"action":"other","changes":{}}').parse(
+            "what is my balance?", done).action, "other")
+
+    def test_email_and_amount_extracted_verbatim(self):
+        from workflows.parser import _deterministic_slots
+        slots, added = _deterministic_slots(
+            'I want to transfer 100 dollar to the email dingsijie@gmail.com', {})
+        self.assertTrue(added)
+        self.assertEqual(slots['recipient_email'], 'dingsijie@gmail.com')
+        self.assertEqual(slots['amount'], '100')
+
+    def test_bare_email_becomes_update_not_clarify(self):
+        from workflows.parser import _deterministic_slots
+        slots, added = _deterministic_slots('dingsijie@gmail.com', {})
+        self.assertTrue(added)
+        self.assertEqual(slots['recipient_email'], 'dingsijie@gmail.com')
+        self.assertNotIn('amount', slots)
+
+    def test_amount_ignores_account_id_digits(self):
+        from workflows.parser import _deterministic_slots
+        slots, added = _deterministic_slots('send 250 to CHK-001', {})
+        self.assertEqual(slots.get('amount'), '250')
+
+    def test_model_amount_wins_and_no_number_means_no_fill(self):
+        from workflows.parser import _deterministic_slots
+        slots, _ = _deterministic_slots('please pause', {'amount': '500'})
+        self.assertEqual(slots['amount'], '500')
+        slots, added = _deterministic_slots('please pause', {})
+        self.assertFalse(added)
+        self.assertNotIn('amount', slots)
 
 
 if __name__ == '__main__':

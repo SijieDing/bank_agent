@@ -103,7 +103,7 @@ def build_transfer_graph(gateway, store, checkpointer):
         task.pending_question = (
             f"Confirm transfer of {task.validated.currency} {task.validated.amount:,.2f} "
             f"from {task.validated.source_account_id} to {task.validated.recipient_email}. "
-            "Mock fee: CAD 0.00. Submit this transfer?"
+            f"Mock fee: {task.validated.currency} {task.validated.fee:,.2f}. Submit this transfer?"
         )
         return persist(task, task.pending_question)
 
