@@ -1,3 +1,10 @@
+from test_support import module_service, authenticated_gateway
+
+
+def setUpModule():
+    module_service()
+
+
 import unittest
 
 from authentication import authenticate_card, contains_credentials

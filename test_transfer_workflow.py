@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 
+from test_support import BankServiceFixture
 from app import BankingAgent
 from gateway import BankingToolGateway
 from router import IntentType, RouteResult
@@ -20,8 +21,10 @@ class TransferTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.store = WorkflowStore(Path(self.tmp.name) / 'bank.sqlite')
-        self.gateway = BankingToolGateway()
-        self.gateway.enable_transfers(self.store)
+        self.service = BankServiceFixture(self.tmp.name)
+        self.addCleanup(self.service.close)
+        self.gateway = self.service.gateway()
+        self.addCleanup(self.gateway.close)
         self.parser = Mock()
         self.manager = self.new_manager()
 
@@ -50,7 +53,7 @@ class TransferTests(unittest.TestCase):
         self.assertIn('successful', self.turn('confirm'))
         self.turn('confirm')
         self.assertEqual(self.balance(), 4820.45)
-        self.assertEqual(len(self.store.transactions('CHK-001')), 1)
+        self.assertEqual(len([tx for tx in self.gateway.get_transactions('CHK-001')['transactions'] if 'transaction_id' in tx]), 1)
         self.assertIn('Transfer to', self.gateway.get_transactions('CHK-001')['transactions'][0]['description'])
 
     def test_missing_amount_and_recipient(self):
@@ -133,8 +136,8 @@ class TransferTests(unittest.TestCase):
         self.assertIn('paused', self.turn('confirm', manager=other))
         self.turn('resume', manager=other)
         self.turn('confirm', manager=other)
-        reloaded = BankingToolGateway()
-        reloaded.enable_transfers(WorkflowStore(self.store.path))
+        reloaded = self.service.gateway()
+        self.addCleanup(reloaded.close)
         self.assertEqual(reloaded.get_balance('CHK-001')['available_balance'], 4820.45)
         with self.assertRaises(ValueError):
             other.handle('resume', {'customer_id': 'C10002'}, turn=TransferTurn(action='resume'))
@@ -150,7 +153,7 @@ class TransferTests(unittest.TestCase):
         self.assertEqual(self.task().status, 'RECONCILING')
         self.assertIn('successful', self.turn('cancel'))
         self.assertEqual(self.balance(), 4820.45)
-        self.assertEqual(len(self.store.transactions('CHK-001')), 1)
+        self.assertEqual(len([tx for tx in self.gateway.get_transactions('CHK-001')['transactions'] if 'transaction_id' in tx]), 1)
 
     def test_unknown_outcome_no_false_cancel(self):
         self.start()
@@ -186,7 +189,7 @@ class TransferTests(unittest.TestCase):
 
     def test_balance_changes_after_confirmation(self):
         self.start(amount='5000')
-        with self.store.connect() as db:
+        with self.service.repository.connect() as db:
             db.execute("UPDATE accounts SET available=100 WHERE account='CHK-001'")
         self.assertIn('failed', self.turn('confirm'))
         self.assertEqual(self.balance(), 1)
@@ -231,7 +234,7 @@ class TransferTests(unittest.TestCase):
             parser.parse('yes')
 
     def test_app_authentication_and_query_integration(self):
-        agent = BankingAgent(self.store.path, 'app-conversation')
+        agent = BankingAgent(self.store.path, 'app-conversation', self.service.url)
         self.addCleanup(agent.close)
         route = RouteResult(IntentType.WORKFLOW, 'transfer_money', 1)
         with patch.object(agent.router, 'route', return_value=route):
@@ -247,7 +250,7 @@ class TransferTests(unittest.TestCase):
         with patch.object(agent.workflow.parser, 'parse', return_value=TransferTurn(action='confirm')):
             self.assertIn('Confirm transfer', agent.handle('yes'))
         self.assertIn('retained', agent.reset())
-        restarted = BankingAgent(self.store.path, 'app-conversation')
+        restarted = BankingAgent(self.store.path, 'app-conversation', self.service.url)
         self.addCleanup(restarted.close)
         self.assertIsNone(restarted.customer_context)
         with patch.object(restarted.router, 'route', return_value=route):

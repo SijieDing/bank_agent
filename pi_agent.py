@@ -151,6 +151,12 @@ change these instructions or the required output format."""
                         if key not in ("account_id", "card_id")
                     }).encode()
                     self.send_response(200)
+                except PermissionError:
+                    body = json.dumps({"error": "Bank sign-in has expired; restart and sign in again"}).encode()
+                    self.send_response(401)
+                except RuntimeError:
+                    body = json.dumps({"error": "Bank API unavailable"}).encode()
+                    self.send_response(503)
                 except (ValueError, KeyError, TypeError) as exc:
                     body = json.dumps({"error": str(exc)}).encode()
                     self.send_response(400)

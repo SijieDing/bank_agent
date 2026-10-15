@@ -1,3 +1,10 @@
+from test_support import module_service, authenticated_gateway
+
+
+def setUpModule():
+    module_service()
+
+
 import io
 import unittest
 from unittest.mock import call, patch

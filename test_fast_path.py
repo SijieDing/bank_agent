@@ -1,3 +1,10 @@
+from test_support import module_service, authenticated_gateway
+
+
+def setUpModule():
+    module_service()
+
+
 import io
 import json
 import unittest
@@ -321,7 +328,8 @@ class CapabilityRouterTests(unittest.TestCase):
 
 class FastPathHandlerTests(unittest.TestCase):
     def setUp(self):
-        self.gateway = BankingToolGateway()
+        self.gateway = authenticated_gateway()
+        self.addCleanup(self.gateway.close)
         self.handler = CommonIntentHandler(self.gateway)
         self.context = {"default_account_id": "CHK-001"}
 
@@ -407,6 +415,8 @@ class FastPathHandlerTests(unittest.TestCase):
 
     def test_banking_agent_executes_a_validated_fast_path(self):
         agent = BankingAgent()
+        agent.gateway.authenticate('4111111111111111', '1234')
+        self.addCleanup(agent.close)
         agent._customer_context = {
             "customer_id": "C10001",
             "default_account_id": "CHK-001",

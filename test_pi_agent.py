@@ -1,3 +1,10 @@
+from test_support import module_service, authenticated_gateway
+
+
+def setUpModule():
+    module_service()
+
+
 import json
 import subprocess
 import unittest
@@ -334,7 +341,8 @@ class PiBankingAgentTests(unittest.TestCase):
         pi_handle.assert_not_called()
 
     def test_transactions_include_both_types_and_filtered_totals(self):
-        gateway = BankingToolGateway()
+        gateway = authenticated_gateway()
+        self.addCleanup(gateway.close)
         all_history = gateway.get_transactions("CHK-001")
         last_three = gateway.get_transactions("CHK-001", limit=3)
         both = gateway.get_transactions("CHK-001", "2026-07-08", "2026-10-08")

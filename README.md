@@ -1,282 +1,205 @@
-# Minimal Banking Agent Framework
+# Banking agent with a separate mock REST backend
 
-This project demonstrates a simple banking agent architecture with:
-
-- Capability Router
-- Small-model, validated fast path
-- Pi fallback path
-- Pi Agent for complex requests
-- LLM-requested, local secure sign-in
-- Banking Tool Gateway
-- Three isolated mock customers and banking APIs
-
-The fast path uses an OpenAI-compatible LM Studio server and a small local model
-(by default `qwen3.5-0.8b-mlx`). Transfers use a persistent LangGraph workflow with Pydantic-validated turn proposals. Complex requests require the
-[Pi CLI](https://pi.dev/docs/latest/cli) with a configured model and credentials.
+The terminal agent uses a small local model for validated fast paths, Pi for
+complex read-only questions, and LangGraph/Pydantic for multi-turn transfers.
+**All banking data is read and written through REST APIs.**
 
 ## Architecture
 
-```text
-User
-  |
-  v
-Unauthenticated --> Pi returns AUTHENTICATE/PUBLIC
-                          |
-                          v
-                 Hidden local card/PIN prompts
-                          |
-                          v
-                 Local verification, fixed customer
-                          |
-                          v
-Capability Router
-  |
-  +--> Validated fast path --> Banking Tool Gateway
-  |
-  +--> Unknown/unsupported --> Pi Agent --> Banking Tool Gateway
-```
+- Fast path / transfer workflow → BankingToolGateway HTTP client → banking REST service → bank SQLite database.
+- Pi extension → restricted local tool bridge → the same HTTP client → the same banking REST service.
+- Agent workflow → separate task/checkpoint store containing drafts and workflow state only.
 
-## Requirements
-
-- Python 3.10 or newer
-- LM Studio with its local server running and the configured small model loaded
-- Pi CLI installed and available as `pi` on `PATH`
-- A configured Pi model and provider credentials
+The agent never imports the bank repository, opens the bank database, or performs
+SQL against balances/transactions. The gateway has no fixtures or database access.
+The TypeScript Pi extension retains its local bridge, which binds tool calls to
+the signed-in account and calls the REST gateway. Pi still has only read tools.
 
 ## Run
 
-```bash
-cd bank_agent
-python3 -m pip install -r requirements.txt
-python3 app.py
-```
+Requires Python 3.10+, LM Studio with its configured model loaded, and Pi CLI
+configured for complex questions.
 
-The router connects to `http://localhost:1234/v1` and uses
-`qwen3.5-0.8b-mlx` by default. Override these with `LMSTUDIO_BASE_URL` and
-`LMSTUDIO_MODEL`; set `BANK_TIMEZONE` (for example, `America/Toronto`) for
-relative transaction dates. If the local router is unavailable or rejects a
-request, the request falls back to Pi.
+Install:
 
-The app runs a continuous question-and-answer chat in your terminal. Type a
-question and press Enter; the app answers and waits for your next question.
-Use `/reset` to clear the conversation or `/exit` (also `/quit`, `exit`, or
-`quit`) to stop. EOF or Ctrl-C also exits. Empty input is ignored, and a failed
-request reports its error so you can try again.
+    python -m pip install -r requirements.txt
 
-The first personal banking question is classified by the local router and then
-goes to Pi for the sign-in decision. A short model call decides whether sign-in
-is needed by returning `AUTHENTICATE` or `PUBLIC`. `AUTHENTICATE` immediately
-opens the hidden prompts; it does not depend on the model executing a tool.
-`PUBLIC` continues to a general answer with no personal banking tools. An
-invalid decision is retried once and then reported as an error. After successful
-sign-in, validated balance, hypothetical spending, monthly projection, filtered
-transaction, and latest-N transaction requests run without further Pi calls.
-Contact-information requests use the public fast path without sign-in. The
-credit-card-summary fast path is intentionally deferred to Pi. Complex questions
-and contextual follow-ups also call Pi and its read-only banking tools. You should
-see output similar to:
+Start the bank service in a separate terminal:
 
-```text
-You: What is my balance?
-Agent: Please enter your card number and PIN in the hidden secure sign-in prompts.
-Card number (hidden):
-PIN (hidden):
-Sign-in successful. This conversation is locked to this user.
-Route: common, Capability: get_balance, Confidence: 1.00
-Agent: Your available balance is CAD 5,320.45.
-```
+    python -m banking_service.server
 
-Requests outside the reviewed plans use the Pi fallback.
+Start the agent:
 
-## Secure sign-in and demo users
+    python app.py
 
-Card numbers and PINs are entered using `getpass` and checked locally in Python.
-They are never included in model prompts, tool schemas/results, conversation
-history, or subprocess arguments. The sign-in decision call has no tools and
-receives only the chat message and safe conversation history. Before
-verification, Pi cannot access any personal banking tool and the fast path is blocked.
-On success, the app answers the original question using the verified customer.
-Pi's input stream is disconnected from the terminal or pipe, so it cannot
-consume later chat messages or secure input. The app reads Pi's structured JSON
-events to distinguish assistant text from tool results, thinking, and errors.
+| Setting | Default | Owner |
+| --- | --- | --- |
+| BANK_API_URL | http://127.0.0.1:8765 | Agent HTTP client |
+| BANK_DB | ~/.bank_agent/bank.sqlite3 | Banking service only |
+| BANK_WORKFLOW_DB | ~/.bank_agent/workflows.sqlite3 | Agent task store |
+| BANK_CONVERSATION_ID | Generated and printed at startup | Agent |
+| LMSTUDIO_BASE_URL | http://localhost:1234/v1 | Small-model router |
+| LMSTUDIO_MODEL | qwen3.5-0.8b-mlx | Small-model router |
+| BANK_TIMEZONE | Existing system default | Relative query dates |
 
-Use one of these public, fake credentials in the secure prompts:
+The service accepts --db and --port overrides and binds only to 127.0.0.1. The
+agent does not automatically start a bank service or fall back to local data.
+Non-loopback client URLs require HTTPS; this server is a local mock, not a
+production HTTP deployment.
 
-| User | Card number | PIN | Account | Card |
+## Authentication and isolation
+
+Card/PIN prompts remain hidden. Credentials go directly to the bank's /auth
+endpoint, never to the model, Pi arguments, tools, chat history, or checkpoints.
+The service verifies PBKDF2 hashes stored in its customers table and returns an
+opaque session token plus safe customer context.
+
+The token stays privately in the gateway. The service authorizes every personal
+request using that token. Request fields cannot override customer identity;
+accounts, cards and transfer status belonging to another customer are rejected.
+The Pi bridge token and bank session token are separate. Pi never receives the
+bank token.
+
+Sessions expire after one hour, are revoked on normal agent shutdown, and do not
+survive bank-service restart. Restart the agent and sign in again if its bank
+session expires. Restoring a workflow never restores authentication.
+
+Public fake credentials:
+
+| Customer | Card number | PIN | Account | Card |
 | --- | --- | --- | --- | --- |
-| 1 | `4111111111111111` | `1234` | `CHK-001` | `VISA-001` |
-| 2 | `5555555555554444` | `2345` | `CHK-002` | `VISA-002` |
-| 3 | `4000000000000002` | `3456` | `CHK-003` | `VISA-003` |
+| 1 | 4111111111111111 | 1234 | CHK-001 | VISA-001 |
+| 2 | 5555555555554444 | 2345 | CHK-002 | VISA-002 |
+| 3 | 4000000000000002 | 3456 | CHK-003 | VISA-003 |
 
-Each user has separate balances, transactions, card details, and payments. PINs
-are checked against local PBKDF2 verifiers. These public fixtures are for this
-demo; real authentication requires a bank identity service.
+Three invalid attempts end the current conversation. /reset does not change
+identity or reset failed attempts. The credential guard rejects card/PIN patterns
+before model calls. For bare four-to-six-digit amounts, type "1000 dollars"
+instead of "1000". Authentication is bank-owned; authentication.py retains the
+chat guard and an API-backed compatibility helper, not a customer database.
 
-Three invalid card/PIN pairs end the conversation. The user cannot change
-identity or sign in again during the conversation. `/reset` clears messages
-while keeping the verified user and failed-attempt count; it cannot reopen an
-ended conversation. An unfinished transfer is retained and paused by `/reset` (an in-flight submission remains available for status reconciliation). Start a new app instance to begin a separate conversation.
-The attempt limit applies to this conversation, not across restarts.
+## REST API
 
-Do not paste credentials into chat. A local guard rejects ordinary card/PIN
-patterns before routing, history, or Pi, including direct Pi API calls. This
-guard is conservative and may reject unrelated numeric identifiers; it cannot
-recognize every encoding of a secret. The dedicated local prompts provide the
-credential isolation.
+| Method and path | Purpose |
+| --- | --- |
+| POST /auth | Verify card/PIN and issue a session |
+| POST /logout | Revoke the current session |
+| GET /contact | Public contact information |
+| GET /accounts | List signed-in customer's accounts |
+| GET /accounts/{id}/balance | Current and available balance |
+| GET /accounts/{id}/transactions | Date, amount, store, type and limit filters |
+| GET /accounts/{id}/payments | Upcoming payments |
+| GET /cards/{id}/summary | Credit-card summary |
+| POST /transfers/validate | Validate draft and resolve recipient |
+| POST /transfers | Submit with Idempotency-Key header |
+| GET /transfers/by-key/{key} | Reconcile submission outcome |
 
-## Conversation context
+Except /auth and /contact, requests require Authorization: Bearer <token>.
+Account ownership, recipients, currency, amount, funds and idempotency are
+enforced by the backend, even when the workflow already validated the draft.
+Transfer JSON contains source_account_id, recipient_email, amount and currency.
+Caller-supplied owner or resolved recipient ID fields are rejected.
 
-Each `BankingAgent` keeps the latest 10 completed question-and-answer pairs in
-memory, including common-path answers. Earlier pairs drop out as the chat
-continues. The app sends these pairs as labeled JSON context with each Pi
-request; Pi itself still runs with `--no-session`. Failed requests do not enter
-the history.
+## Bank storage
 
-The router asks the small local model to choose one reviewed plan and extract
-its variables. Python then validates the complete request, amounts, dates, and
-filters before any gateway call. A rejected known proposal falls back to Pi
-with only that plan's corresponding tools; if that attempt fails for a signed-in
-customer, Pi retries with the full tool set. Missing or unsupported proposals
-use the full set immediately. Fast-path turns establish the corresponding
-banking tool for a later follow-up. Pi uses the conversation to understand
-fallback questions and fetches banking facts from the gateway.
+banking_service/seed.py contains initialization fixtures only. A fresh bank DB
+is seeded once transactionally. Restarts do not overwrite existing records.
 
-`/reset` clears message history and inherited tools. Customer identity comes
-only from successful local verification, and cannot change through chat or a
-caller-supplied context. `BankingAgent.handle(message)` takes no customer context;
-`authenticate(card_number, pin)` is allowed only after Pi requests sign-in.
-Chat messages are not saved. Transfer drafts and mock ledger outcomes are persisted separately, with fresh sign-in required after restart.
+Customers, accounts, cards, transactions, payments, recipients, contact
+information and transfer/idempotency records all live in the bank database.
+Original transactions and new transfers use one transactions table. Balances
+are integer cents. One SQLite transaction checks funds, debits, inserts the
+transaction and records the outcome. Same-key retries return the same outcome;
+changed payloads are rejected.
 
-## Files
+All operations are mock operations: no real bank, transfer, email or external
+settlement is involved. Registered fake recipients are dingsijie@gmail.com and
+abc@example.com. CAD is the displayed default and the demo fee is zero.
+Outgoing transfers appear as purchase transactions for existing query filters.
 
-- `app.py`: Application entry point
-- `authentication.py`: Local demo verification and chat credential guard
-- `router.py`: Capability Router
-- `common_intents.py`: Fast path for common requests
-- `pi_agent.py`: Pi CLI integration and temporary gateway bridge
-- `pi_banking_extension.ts`: Pi banking tools
-- `customer_service_policy.md`: Pi response pattern, tone, and banking rules
-- `gateway.py`: Banking Tool Gateway and mock banking APIs
+## Multi-turn transfers
 
-The gateway still returns mock banking data. Pi only receives access to the
-current customer's read only gateway methods. Tool access comes from the current
-route, or the previous successful turn when the current route has no tools.
-Pi's file and shell tools are disabled.
+    You: I want to transfer some money to dingsijie@gmail.com.
+    Agent: Please provide the amount.
+    You: 500 dollars.
+    Agent: Confirm transfer of CAD 500.00 from CHK-001 to dingsijie@gmail.com...
+    You: Actually, make it 300.
+    Agent: [Revalidates and displays the updated confirmation.]
+    You: Pause the transfer.
+    Agent: [Saves the draft.]
+    You: What is my balance?
+    Agent: [Queries the REST API.]
+    You: Resume the transfer.
+    Agent: [Revalidates and asks for fresh confirmation.]
+    You: Yes.
+    Agent: [Submits and reports the transaction ID.]
 
-`get_transactions` lists matching mock transactions within an optional inclusive
-date range. It supports `both` (the default), `saving`, and `purchase` filters,
-amount and store filters, and an optional newest-first `limit`. Totals cover the
-returned transactions. A production gateway must query complete account history
-for the requested range.
+One unfinished transfer is allowed per conversation. Details may arrive across
+turns or change together. Changes invalidate confirmation. An unrelated question
+also invalidates pending confirmation: a subsequent "yes" displays a new summary.
+Confirming while modifying details only updates the draft. /reset retains and
+pauses a draft; resume or cancel it explicitly.
 
-Edit `customer_service_policy.md` to change how Pi answers complex questions.
-The validated fast path uses fixed response templates in `common_intents.py`.
-The policy guides Pi's output; verify important changes against sample customer
-questions with a configured Pi model before relying on them.
+Cancellation before submission moves no money. In-flight or unknown outcomes
+are reconciled through the API, not falsely reported as cancelled. The synchronous
+mock can definitively report NOT_SUBMITTED; the workflow may then cancel or retry
+the already-authorized intent with its original key. Remote adapters must report
+unknown when they cannot establish the outcome.
 
-Run the local regression and authentication checks with
-`python3 -m unittest discover -v`. The fast-path and transfer tests use fake model
-responses; the Pi tests substitute Pi responses and exercise the local HTTP tool
-bridge without calling a model provider.
+## Task persistence and restart
 
+The workflow database has only a tasks table. Its adjacent .checkpoints database
+contains LangGraph state. Credentials and bank tokens are never saved.
+Agent and bank database paths must differ.
 
-## Multi-turn mock transfers
+Each graph turn ends at a waiting state. The next user message applies a typed
+event to the saved task. Task snapshots are authoritative for recovery. Submission
+intent is saved before the API call. Bank-side idempotency, not checkpointing
+alone, prevents duplicate debit.
 
-The `transfer_money` workflow supports incomplete requests, field corrections,
-pause/resume, cancellation before submission, and explicit confirmation. The
-initial capability router recognizes a transfer request; a dedicated structured
-parser then interprets transfer turns. An active task is considered before the
-ordinary router, so short answers such as `500 dollars` fill the existing draft.
-Unrelated questions use the existing fast path/Pi integration and invalidate any
-pending confirmation. Amounts, recipients, ownership, and balance checks are
-validated by Python and the gateway, not trusted from model output.
+Reuse the printed conversation ID:
 
-Example (after secure sign-in):
+    BANK_CONVERSATION_ID=<previous-id> python app.py
 
-```text
-You: I want to transfer some money to dingsijie@gmail.com.
-Agent: Please provide the amount.
-You: 500 dollars.
-Agent: Confirm transfer of CAD 500.00 from CHK-001 to dingsijie@gmail.com. Mock fee: CAD 0.00. Submit this transfer?
-You: Actually, make it 300.
-Agent: Confirm transfer of CAD 300.00 ...
-You: Pause the transfer.
-Agent: Transfer paused. Your draft is saved; say 'resume transfer' to continue.
-You: What is my balance?
-Agent: Your available balance is CAD 5,320.45.
-You: Resume the transfer.
-Agent: Confirm transfer of CAD 300.00 ...
-You: Yes.
-Agent: Transfer successful. Transaction ID: ...
-```
+Sign in as the same customer, then resume/check the task. Restored drafts require
+fresh confirmation; already-authorized in-flight submissions are reconciled.
 
-Only `dingsijie@gmail.com` and `abc@example.com` are registered **fake external
-recipients**. No email is sent, no real account is contacted, and no real money
-moves. Each demo customer's single checking account is the default source.
-CAD is the explicit demo default, shown in every confirmation; other currencies
-are rejected. There are no fees. Outgoing mock transfers debit both available
-and current balances and appear as `purchase` transactions in existing queries.
-The mock settlement record represents payment to an external recipient; there
-is no real external settlement or recipient authentication.
+### Migration from the earlier combined database
 
-One unfinished transfer is allowed per conversation. A second request cannot
-overwrite it. An explicit modification invalidates the previous confirmation,
-and `confirm but change it to 400` only updates the draft. After an unrelated
-question, `yes` displays a fresh summary instead of submitting. Cancellation
-before submission moves no money; successful transfers cannot be cancelled.
+Stop the old agent and bank service. Earlier code stored tasks and banking data
+together in ~/.bank_agent/transfers.sqlite3. Do not point either new component
+at that file. Preserve its records with:
 
-The existing credential guard rejects bare four-to-six-digit messages as
-possible PINs. For such amounts, enter `1000 dollars` rather than `1000`.
+    python -m banking_service.migrate ~/.bank_agent/transfers.sqlite3 \
+      --bank-db ~/.bank_agent/bank.sqlite3 \
+      --workflow-db ~/.bank_agent/workflows.sqlite3
 
-### Storage and recovery
+Both destinations must be new files. The source remains untouched. Migration
+copies balances, transfer outcomes and tasks without debiting again. Old graph
+checkpoints are unnecessary because task snapshots are authoritative. If you
+already started the new demo, choose new destination paths and configure BANK_DB
+and BANK_WORKFLOW_DB accordingly.
 
-Default storage is `~/.bank_agent/transfers.sqlite3`. Set `BANK_WORKFLOW_DB` to
-choose another persistent SQLite file. Task snapshots and the mock ledger use
-this file; LangGraph checkpoints use the adjacent `.checkpoints` database.
-The application prints a conversation ID on startup. Reuse it to restore a task:
+## Files and tests
 
-```bash
-BANK_CONVERSATION_ID=<previous-conversation-id> python3 app.py
-```
+- app.py: chat, authenticated gateway, routing, task coordination.
+- gateway.py: HTTP client only.
+- banking_service/server.py: standalone REST service and session handling.
+- banking_service/repository.py: SQL reads, authorization, atomic transfers.
+- banking_service/seed.py: one-time fixtures.
+- banking_service/migrate.py: offline legacy migration.
+- bank_contracts.py: shared Pydantic REST models.
+- workflows/: graph, parser, task models and task-only persistence.
+- pi_agent.py / pi_banking_extension.ts: restricted read-only tool bridge.
+- common_intents.py: fast-path responses using the REST gateway.
 
-Sign in again, then say `resume transfer` or ask for its status. A different
-customer cannot load the task. Credentials and authenticated sessions are never
-persisted. Restored drafts need a fresh confirmation. Previously authorized
-in-flight submissions are reconciled rather than creating another submission.
-`/reset` clears chat and retains/pauses the draft; resume or cancel it explicitly.
+Tests start isolated real loopback HTTP servers and temporary databases. Models
+are mocked; no manually running banking server is needed.
 
-LangGraph runs an apply node and conditional validation, submission, or
-reconciliation nodes. Each conversational waiting state ends the graph turn;
-the next message supplies a typed event against the durable task snapshot.
-This uses turn-based checkpointing rather than replaying an interrupted node.
-Task snapshots are authoritative during crash recovery. Every submission intent
-is saved before the gateway call. A SQLite transaction atomically records its
-idempotency key, outcome, and debit. Duplicate confirmations or retries cannot
-apply that debit twice; keys cannot be reused with changed payloads.
+    python -m unittest test_bank_api test_transfer_workflow test_gateway test_authentication test_fast_path -v
+    python -m unittest discover -v
 
-The synchronous mock ledger can definitively report `NOT_SUBMITTED`; recovery
-may then retry the already-authorized submission with its original key, or cancel
-it on request. A remote adapter must return an unknown result when it cannot
-establish the outcome. Unknown outcomes remain in `RECONCILING`, with no blind
-retry or false cancellation claim. Do not replace this behavior with a new key.
-
-Local workflow turns are serialized with a file lock (macOS/Linux). This is a
-single-host demo, not a distributed production banking service. Before using a
-real backend, implement its authorization, settlement, idempotency, transaction
-status and cancellation contracts. Model interpretation still needs validation
-with the configured local model; unit tests do not establish its language accuracy.
-
-### Implementation and tests
-
-- `workflows/models.py`: incomplete draft, turn proposal, validated transfer, task.
-- `workflows/parser.py`: one structured model call per active workflow turn.
-- `workflows/manager.py`: owner-bound task coordination and checkpoint setup.
-- `workflows/transfer.py`: LangGraph transitions and confirmation enforcement.
-- `workflows/store.py`: SQLite snapshots and atomic mock ledger.
-- `test_transfer_workflow.py`: offline workflow, gateway, parser, and app tests.
-
-Run `python3 -m unittest test_transfer_workflow -v` for the new offline tests.
-Run `python3 -m unittest discover -v` for the entire existing suite. Some legacy
-router tests require a running model despite the old README's description, and
-some Pi tests assert behavior absent on main (thinking output and flags). See
-`TRANSFER_VALIDATION.md` for the baseline comparison performed for this change.
+The REST CI job runs the focused suite. Some legacy router/Pi tests still rely
+on a model or expectations absent on main; see TRANSFER_VALIDATION.md. Live model
+accuracy and latency are separate from API testing. SQLite/file locks target a
+single macOS/Linux host, not a distributed production banking service.

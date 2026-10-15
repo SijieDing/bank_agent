@@ -8,7 +8,7 @@ from workflows.manager import WorkflowManager
 from workflows.parser import TransferParser
 import threading
 
-from authentication import authenticate_card, contains_credentials
+from authentication import contains_credentials
 from router import CapabilityRouter, IntentType
 from gateway import BankingToolGateway
 from common_intents import CommonIntentHandler
@@ -30,13 +30,12 @@ class BankingAgent:
         "contact_information": ("get_contact_information",),
     }
 
-    def __init__(self, workflow_db=None, conversation_id=None):
+    def __init__(self, workflow_db=None, conversation_id=None, bank_api_url=None):
         self.router = CapabilityRouter()
-        self.gateway = BankingToolGateway()
+        self.gateway = BankingToolGateway(base_url=bank_api_url)
         self.conversation_id = conversation_id or os.getenv("BANK_CONVERSATION_ID") or uuid4().hex
         self.workflow_store = WorkflowStore(workflow_db or os.getenv(
-            "BANK_WORKFLOW_DB", str(Path.home() / ".bank_agent" / "transfers.sqlite3")))
-        self.gateway.enable_transfers(self.workflow_store)
+            "BANK_WORKFLOW_DB", str(Path.home() / ".bank_agent" / "workflows.sqlite3")))
         self._workflow = None
         self.common_handler = CommonIntentHandler(self.gateway)
         self.pi_agent = PiBankingAgent(self.gateway)
@@ -58,6 +57,7 @@ class BankingAgent:
         return self._workflow
 
     def close(self):
+        self.gateway.close()
         if self._workflow:
             self._workflow.close()
 
@@ -99,7 +99,7 @@ class BankingAgent:
             if not self._authentication_requested:
                 raise ValueError("The agent must request secure sign-in first")
 
-            context = authenticate_card(card_number, pin)
+            context = self.gateway.authenticate(card_number, pin)
             if context is None:
                 self._failed_auth_attempts += 1
                 if self._failed_auth_attempts >= self.MAX_AUTH_ATTEMPTS:
