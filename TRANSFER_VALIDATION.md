@@ -22,3 +22,11 @@ not validation of this refactor. A GitHub Actions job compiles Python and runs:
 See branch Actions results for execution status. Live model behavior has not
 been validated. Full discovery retains the pre-existing model-dependent/obsolete
 router and Pi expectations described above.
+
+### Verified REST result
+
+GitHub Actions run [38747669971](https://github.com/SijieDing/bank_agent/actions/runs/38747669971)
+passed for code commit `5db63451b4f07885aec1caa6f4c9b83fe5eecae2`:
+Python compilation succeeded and all **63 focused tests passed**. This includes
+legacy-data migration and unknown submission outcomes. Full legacy discovery was
+not re-run for this refactor; the historical baseline above is not a current result.
