@@ -143,7 +143,14 @@ def build_transfer_graph(gateway, store, checkpointer):
             task.status = "SUBMITTING"
             return persist(task, None, "submit")
         if outcome is None:
-            # Never retry on an unknown result. An operator can reconcile a real backend.
+            # Explicit resume can replay the SAME authorized idempotent request.
+            # A missing REST result cannot establish that an earlier handler will not commit.
+            if (state["turn"]["action"] == "resume"
+                    and task.confirmed_version == task.draft_version
+                    and task.submission_key and task.validated is not None):
+                task.status = "SUBMITTING"
+                return persist(task, None, "submit")
+            # Status checks and cancellation never initiate a debit.
             task.status = "RECONCILING"
             return persist(task, "Transfer outcome is still unknown. No additional transfer was submitted; cancellation is not confirmed.")
         return result(task, outcome)

@@ -141,10 +141,11 @@ Confirming while modifying details only updates the draft. /reset retains and
 pauses a draft; resume or cancel it explicitly.
 
 Cancellation before submission moves no money. In-flight or unknown outcomes
-are reconciled through the API, not falsely reported as cancelled. The synchronous
-mock can definitively report NOT_SUBMITTED; the workflow may then cancel or retry
-the already-authorized intent with its original key. Remote adapters must report
-unknown when they cannot establish the outcome.
+are reconciled through the API, not falsely reported as cancelled. A missing
+record is an unknown outcome: an earlier HTTP request might still be queued.
+Explicit "resume transfer" retries the already-authorized request using the SAME
+idempotency key. Status checks and cancellation do not submit anything. An unknown
+transfer cannot be declared cancelled merely because no record is visible.
 
 ## Task persistence and restart
 

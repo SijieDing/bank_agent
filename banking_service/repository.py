@@ -179,12 +179,12 @@ class BankRepository:
 
     def get_transfer_status(self, owner, key):
         with self.connect() as db:
-            # Serializes behind a synchronous in-flight debit before reporting absence.
+            # No record is not proof of non-submission: another HTTP handler may be queued.
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT owner,result FROM transfers WHERE key=?", (key,)).fetchone()
         if row and row["owner"] != owner:
             raise PermissionError("Unknown or unauthorized transaction")
-        return json.loads(row["result"]) if row else {"status": "NOT_SUBMITTED"}
+        return json.loads(row["result"]) if row else None
 
     def get_transactions(
         self,

@@ -112,3 +112,43 @@ class BankApiTests(unittest.TestCase):
         self.assertEqual(error.exception.code, 403)
         with self.assertRaises(ValueError):
             self.gateway._request("POST", "/transfers", self.draft().model_dump(mode="json"))
+
+
+    def test_missing_status_is_unknown_not_proof_of_cancellation(self):
+        self.assertIsNone(self.gateway.get_transfer_status("C10001", "not-recorded"))
+
+    def test_legacy_migration_preserves_balances_records_and_task(self):
+        import sqlite3
+        from banking_service.migrate import migrate
+        from workflows.models import TransferTask
+        transfer = self.gateway.validate_transfer("C10001", self.draft())
+        result = self.gateway.submit_transfer("C10001", "legacy-key", transfer)
+        legacy = self.service.directory / "legacy.sqlite3"
+        old = sqlite3.connect(legacy)
+        try:
+            with old:
+                old.executescript("""
+                    CREATE TABLE accounts (account TEXT, owner TEXT, available INTEGER, current INTEGER);
+                    CREATE TABLE transfers (key TEXT, owner TEXT, payload TEXT, result TEXT);
+                    CREATE TABLE tasks (conversation TEXT, owner TEXT, data TEXT);
+                """)
+                with self.service.repository.connect() as bank:
+                    old.executemany("INSERT INTO accounts VALUES (?,?,?,?)",
+                                    [tuple(row) for row in bank.execute("SELECT account,owner,available,current FROM accounts")])
+                    old.executemany("INSERT INTO transfers VALUES (?,?,?,?)",
+                                    [tuple(row) for row in bank.execute("SELECT key,owner,payload,result FROM transfers")])
+                task = TransferTask(owner="C10001", conversation_id="migrated",
+                                    draft=self.draft(), status="SUCCEEDED", result=result)
+                old.execute("INSERT INTO tasks VALUES (?,?,?)", ("migrated", "C10001", task.model_dump_json()))
+        finally:
+            old.close()
+        bank_path = self.service.directory / "migrated-bank.sqlite3"
+        task_path = self.service.directory / "migrated-tasks.sqlite3"
+        migrate(legacy, bank_path, task_path)
+        bank = BankRepository(bank_path)
+        self.assertEqual(bank.get_balance("C10001", "CHK-001")["available_balance"], 4820.45)
+        self.assertEqual(len(bank.get_transactions("C10001", "CHK-001")["transactions"]), 11)
+        self.assertEqual(bank.get_transfer_status("C10001", "legacy-key"), result)
+        self.assertEqual(WorkflowStore(task_path).load("migrated", "C10001").task_id, task.task_id)
+        with self.assertRaises(ValueError):
+            migrate(legacy, bank_path, task_path)
