@@ -39,6 +39,14 @@ class WorkflowStore:
             finally:
                 fcntl.flock(handle, fcntl.LOCK_UN)
 
+    def load_any(self, conversation):
+        """Conversation-scoped lookup without the owner check; for cleanup."""
+        with self.connect() as db:
+            row = db.execute("SELECT owner,data FROM tasks WHERE conversation=?", (conversation,)).fetchone()
+        if row is None:
+            return None
+        return TransferTask.model_validate_json(row[1])
+
     def load(self, conversation, owner):
         with self.connect() as db:
             row = db.execute("SELECT owner,data FROM tasks WHERE conversation=?", (conversation,)).fetchone()

@@ -47,6 +47,12 @@ class TransferTests(unittest.TestCase):
     def balance(self):
         return self.gateway.get_balance('CHK-001')['available_balance']
 
+    def test_close_cancels_unfinished_task(self):
+        self.start()
+        self.manager.close()  # conversation end
+        self.manager = self.new_manager()
+        self.assertEqual(self.task().status, "CANCELLED")
+
     def test_complete_confirm_duplicate(self):
         self.assertIn('Confirm transfer', self.start())
         self.assertEqual(self.balance(), 5320.45)

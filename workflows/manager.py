@@ -19,7 +19,18 @@ class WorkflowManager:
         self.graph = build_transfer_graph(gateway, store, SqliteSaver(self.connection))
 
     def close(self):
-        self.connection.close()
+        # Conversation end: cancel any unfinished task of this conversation so
+        # no workflow is left dangling. In-flight submissions are untouched:
+        # their money movement outcome is unknown, so they must not be marked
+        # cancelled. Generic over workflow type; new workflows inherit this.
+        with self.store.lock():
+            task = self.store.load_any(self.conversation_id)
+            if task and not task.terminal and task.status not in {"SUBMITTING", "RECONCILING"}:
+                task.status = "CANCELLED"
+                self.store.save(task)
+        if self.connection is not None:
+            self.connection.close()
+            self.connection = None
 
     def get_task(self, owner):
         return self.store.load(self.conversation_id, owner)
